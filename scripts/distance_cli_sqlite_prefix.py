@@ -6,7 +6,7 @@ Features:
 - build-meta: scan systems (from file or stdin) and systems.schema.json to produce a meta JSON with:
     {"prefixes": {"0": "" , "1": "Sol", ...}, "starTypes": {"0":"", "1":"G (White-Yellow) Star", ...}}
   Prefix extraction rule: if name contains '-' use everything up to the first dash, otherwise use everything up to the first space; if neither, the whole name. Reserve id 0 for empty prefix.
-- build-index: read systems from file or stdin, skip systems needing a permit, and store prefix_id and star_type_id (integers) along with coordinates and bucket coords. Index is resumable (INSERT OR IGNORE) and shows progress.
+- build-index: read systems from file or stdin, skip systems needing a permit, and store prefix_id, name_suffix and star_type_id (integers) along with coordinates and bucket coords. Index is resumable (INSERT OR IGNORE) and shows progress.
 - query/pathfinding: loads the meta JSON to display prefix labels and star types. Pathfinding uses bucketed neighbor queries that only load nearby rows from sqlite.
 
 I/O: pass --file - to read systems from stdin (useful with compressed files, e.g. zcat systems_neutron.json.gz | python ... --file - --build-index ...)
@@ -158,12 +158,18 @@ def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
             star_type_id INTEGER,
             bx INTEGER,
             by INTEGER,
-            bz INTEGER
+            bz INTEGER,
+            name_suffix TEXT
         )
     ''')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_buckets ON systems(bx,by,bz)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_prefix ON systems(prefix_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_star_type ON systems(star_type_id)')
+    # Ensure name_suffix column exists for older DBs
+    cur.execute("PRAGMA table_info(systems)")
+    cols = [r[1] for r in cur.fetchall()]
+    if 'name_suffix' not in cols:
+        cur.execute('ALTER TABLE systems ADD COLUMN name_suffix TEXT')
     conn.commit()
 
 
@@ -192,7 +198,7 @@ def build_index_prefix(json_path: str, db_path: str, bucket_size: float, meta_pa
     def bucket_coords(x: float, y: float, z: float) -> Tuple[int,int,int]:
         return (math.floor(x / bucket_size), math.floor(y / bucket_size), math.floor(z / bucket_size))
 
-    insert_sql = 'INSERT OR IGNORE INTO systems (id64,prefix_id,x,y,z,star_type_id,bx,by,bz) VALUES (?,?,?,?,?,?,?,?,?)'
+    insert_sql = 'INSERT OR IGNORE INTO systems (id64,prefix_id,x,y,z,star_type_id,bx,by,bz,name_suffix) VALUES (?,?,?,?,?,?,?,?,?,?)'
     batch: List[Tuple] = []
     inserted = 0
     processed = 0
@@ -220,9 +226,11 @@ def build_index_prefix(json_path: str, db_path: str, bucket_size: float, meta_pa
             prefix = extract_prefix(name)
             prefix_id = prefix_to_id.get(prefix, 0)
             star_id = star_to_id.get(main_star, 0)
+            # store suffix including separator so prefix + suffix == original name
+            suffix = name[len(prefix):]
             x = float(coords['x']); y = float(coords['y']); z = float(coords['z'])
             bx,by,bz = bucket_coords(x,y,z)
-            batch.append((sid, prefix_id, x, y, z, star_id, bx, by, bz))
+            batch.append((sid, prefix_id, x, y, z, star_id, bx, by, bz, suffix))
         except Exception:
             continue
         if len(batch) >= BATCH_SIZE:
@@ -247,19 +255,23 @@ def get_system_by_query_prefix(conn: sqlite3.Connection, query: str, meta: Dict,
     id_to_prefix = {int(k): v for k,v in prefixes.items()}
     try:
         q_int = int(query)
-        cur = conn.execute('SELECT id64,prefix_id,x,y,z,star_type_id FROM systems WHERE id64=?', (q_int,))
+        cur = conn.execute('SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id FROM systems WHERE id64=?', (q_int,))
         row = cur.fetchone()
-        return ([{'id64': row[0], 'name': id_to_prefix.get(row[1], '') + ' ...', 'coords': {'x': row[2],'y': row[3],'z': row[4]}, 'starTypeId': row[5]}] if row else [])
+        if not row:
+            return []
+        name = id_to_prefix.get(row[1], '') + (row[2] or '')
+        return [{'id64': row[0], 'name': name, 'coords': {'x': row[3],'y': row[4],'z': row[5]}, 'starTypeId': row[6]}]
     except Exception:
         matched_prefix_ids = [int(k) for k,v in prefixes.items() if query.lower() in v.lower()]
         if not matched_prefix_ids:
             return []
         placeholders = ','.join('?' for _ in matched_prefix_ids)
-        sql = f'SELECT id64,prefix_id,x,y,z,star_type_id FROM systems WHERE prefix_id IN ({placeholders}) LIMIT ?'
+        sql = f'SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id FROM systems WHERE prefix_id IN ({placeholders}) LIMIT ?'
         cur = conn.execute(sql, (*matched_prefix_ids, limit))
         out = []
         for r in cur:
-            out.append({'id64': r[0], 'name': id_to_prefix.get(r[1], '') + ' ...', 'coords': {'x': r[2],'y': r[3],'z': r[4]}, 'starTypeId': r[5]})
+            name = id_to_prefix.get(r[1], '') + (r[2] or '')
+            out.append({'id64': r[0], 'name': name, 'coords': {'x': r[3],'y': r[4],'z': r[5]}, 'starTypeId': r[6]})
         return out
 
 
@@ -273,7 +285,7 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
     min_by, max_by = by - rb, by + rb
     min_bz, max_bz = bz - rb, bz + rb
 
-    sql = '''SELECT id64,prefix_id,x,y,z,star_type_id FROM systems
+    sql = '''SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id FROM systems
              WHERE bx BETWEEN ? AND ? AND by BETWEEN ? AND ? AND bz BETWEEN ? AND ?'''
     cur = conn.execute(sql, (min_bx, max_bx, min_by, max_by, min_bz, max_bz))
 
@@ -288,14 +300,14 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
         sid = r[0]
         if sid == center['id64'] or sid in visited:
             continue
-        x,y,z = r[2], r[3], r[4]
+        x,y,z = r[3], r[4], r[5]
         dx = x - center['coords']['x']
         dy = y - center['coords']['y']
         dz = z - center['coords']['z']
         d2 = dx*dx + dy*dy + dz*dz
         if d2 <= max_d2:
-            name = id_to_prefix.get(r[1], '') + ' ...'
-            star = id_to_star.get(r[5], '')
+            name = id_to_prefix.get(r[1], '') + (r[2] or '')
+            star = id_to_star.get(r[6], '')
             out.append((d2, {'id64': sid, 'name': name, 'coords': {'x': x,'y': y,'z': z}, 'mainStar': star}))
     out.sort(key=lambda t: t[0])
     return [t[1] for t in out[:max_neighbors]]
