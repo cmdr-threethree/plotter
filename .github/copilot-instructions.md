@@ -43,3 +43,55 @@ Notes for future AI assistants
 - No language-specific build/test tooling detected; focus on data-processing guidance.
 - If adding code (scripts, tests, CI), update this file with exact commands and examples so future assistants can surface them.
 
+Indexing, meta file, and prefix compression
+
+This project includes a prefix-compressed SQLite index builder and reader to reduce DB size and speed queries. Key points:
+- Meta file: a JSON map (default: systems_meta.json) that stores two mappings:
+  - prefixes: { "0": "", "1": "Sol", ... } — integer key -> string prefix. Use "0" for empty prefix.
+  - starTypes: { "0": "", "1": "G (White-Yellow) Star", ... } — integer key -> star type string.
+- Prefix extraction rule: if a dash (`-`) exists, take everything up to the first dash as prefix; otherwise take everything up to the first space. The remainder is stored as name_suffix so full name = prefix + name_suffix.
+- systems with needsPermit == true are omitted from the index.
+
+Building meta and index (stdin support)
+
+- Build meta (writes systems_meta.json):
+  scripts/distance_cli_sqlite_prefix.py --build-meta --file systems_neutron.json
+  or with compressed input on stdin: zcat systems_neutron.json.gz | scripts/distance_cli_sqlite_prefix.py --build-meta --file -
+- Build index (reads JSON from file or stdin and creates sqlite DB):
+  scripts/distance_cli_sqlite_prefix.py --build-index --file systems_neutron.json --meta systems_meta.json --out systems_neutron.sqlite
+  or using stdin (recommended when data is compressed): zcat systems_neutron.json.gz | scripts/distance_cli_sqlite_prefix.py --build-index --file - --meta systems_meta.json --out systems_neutron.sqlite
+- The special token "-" for --file means read JSON from stdin; this enables piping decompressed data directly into the builder so large compressed dumps need not be stored uncompressed on disk.
+
+SQLite schema (prefix-compressed index)
+
+The prefix-compressed DB schema (columns used by the scripts) is:
+- id64 INTEGER PRIMARY KEY
+- prefix_id INTEGER      -- index into meta.prefixes
+- name_suffix TEXT       -- remainder of the name after the prefix (includes separator if present)
+- x REAL, y REAL, z REAL -- coordinates
+- bx INTEGER, by INTEGER, bz INTEGER -- bucket grid coordinates for spatial indexing
+- star_type_id INTEGER   -- index into meta.starTypes
+- updateTime TEXT        -- RFC3339 timestamp (kept for reference)
+
+Note: older DBs created before name_suffix existed will be migrated by adding the column on first use. A small backfill helper can be added if you already have a DB without suffixes.
+
+Using the index and reconstructing names
+
+- Query tools reconstruct full names at runtime by loading the meta JSON and concatenating meta.prefixes[str(prefix_id)] + name_suffix.
+- Neighbor queries only load nearby buckets from SQLite into memory to keep RAM usage low.
+- Star type strings are reconstructed via meta.starTypes[str(star_type_id)].
+
+Tips
+
+- Tune --bucket-size when building the DB to balance DB size vs candidate counts for neighbor queries.
+- Use --max-neighbors and --max-hop carefully for pathfinding to avoid wide searches.
+- The prefix heuristic works for the majority of names but may mis-segment some edge cases; verify if important names appear truncated.
+
+Commands for quick inspection
+
+- Show top prefixes (simple count example):
+  sqlite3 systems_neutron.sqlite "SELECT prefix_id, count(*) FROM systems GROUP BY prefix_id ORDER BY count(*) DESC LIMIT 20;"
+- Reconstruct a single name using Python and meta JSON:
+  python -c "import json; m=json.load(open('systems_meta.json')); p=m['prefixes']['1']; print(p + 'Suffix')"
+
+
