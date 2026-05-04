@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Plotter — Path Finder</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header><h1>Plotter</h1></header>
+    <main>
+      <div class="controls">
+        <div class="row">
+          <label>Source</label>
+          <input id="source" placeholder="system name or id64" />
+          <div id="src-suggestions" class="suggestions"></div>
+        </div>
+        <div class="row">
+          <label>Target</label>
+          <input id="target" placeholder="system name or id64" />
+          <div id="tgt-suggestions" class="suggestions"></div>
+        </div>
+        <div class="row small">
+          <label>Max hop</label>
+          <input id="max-hop" type="number" value="40" />
+          <label>Bucket size</label>
+          <input id="bucket-size" type="number" value="50" />
+        </div>
+        <div class="row">
+          <button id="find">Find path</button>
+        </div>
+      </div>
+      <section id="results">
+        <h2>Results</h2>
+        <div id="info"></div>
+        <ol id="path-list"></ol>
+      </section>
+    </main>
+    <footer>Flask + SPA demo</footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+*{box-sizing:border-box;font-family:Inter,system-ui,Arial,sans-serif}
+body{margin:0;background:#f6f8fb;color:#111}
+#app{max-width:960px;margin:24px auto;padding:16px;background:#fff;border-radius:8px;box-shadow:0 6px 24px rgba(15,23,42,0.08)}
+header h1{margin:0 0 12px 0}
+.controls{display:flex;flex-direction:column;gap:12px}
+.row{display:flex;gap:8px;align-items:center}
+.row label{width:90px}
+.row input{flex:1;padding:8px;border:1px solid #ddd;border-radius:6px}
+.row.small input{width:120px}
+button{padding:10px 14px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer}
+button:active{transform:translateY(1px)}
+.suggestions{background:#fff;border:1px solid #eee;border-radius:6px;padding:6px;margin-top:6px;max-height:160px;overflow:auto}
+.suggest{padding:6px;border-radius:4px}
+.suggest:hover{background:#f0f4ff}
+#results{margin-top:18px}
+#path-list li{padding:8px;border-bottom:1px solid #f0f0f0}
+footer{margin-top:18px;font-size:13px;color:#666}
