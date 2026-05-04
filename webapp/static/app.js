@@ -72,6 +72,31 @@ $('find').addEventListener('click', async ()=>{
         data.path.forEach((p, i)=>{
           const li = document.createElement('li');
           li.innerHTML = `<strong>${i+1}) ${p.name}</strong> id=${p.id64} coords=(${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) hop=${p.hop_dist.toFixed(1)} mainStar=${p.mainStar || ''}`;
+          // click to copy system name to clipboard
+          li.style.cursor = 'pointer';
+          li.title = 'Click to copy system name';
+          li.addEventListener('click', async ()=>{
+            const txt = p.name || '';
+            try{
+              if(navigator.clipboard && navigator.clipboard.writeText){
+                await navigator.clipboard.writeText(txt);
+              }else{
+                // fallback
+                const ta = document.createElement('textarea');
+                ta.value = txt;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+              }
+              const old = $('info').textContent;
+              $('info').textContent = `Copied: ${txt}`;
+              setTimeout(()=>{ $('info').textContent = old; }, 2000);
+            }catch(e){
+              $('info').textContent = `Copy failed`;
+              setTimeout(()=>{ $('info').textContent = ''; }, 2000);
+            }
+          });
           list.appendChild(li);
         });
       }
