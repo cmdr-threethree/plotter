@@ -89,12 +89,32 @@ $('find').addEventListener('click', async ()=>{
                 document.execCommand('copy');
                 document.body.removeChild(ta);
               }
-              const old = $('info').textContent;
+              // Manage info area restore so multiple quick clicks don't overwrite previous content incorrectly
+              if (window._infoRestoreTimeout == null) {
+                window._infoPrevText = $('info').textContent;
+              }
               $('info').textContent = `Copied: ${txt}`;
-              setTimeout(()=>{ $('info').textContent = old; }, 2000);
+              if (window._infoRestoreTimeout) {
+                clearTimeout(window._infoRestoreTimeout);
+              }
+              window._infoRestoreTimeout = setTimeout(()=>{
+                $('info').textContent = window._infoPrevText || '';
+                window._infoRestoreTimeout = null;
+                window._infoPrevText = null;
+              }, 2000);
             }catch(e){
+              if (window._infoRestoreTimeout == null) {
+                window._infoPrevText = $('info').textContent;
+              }
               $('info').textContent = `Copy failed`;
-              setTimeout(()=>{ $('info').textContent = ''; }, 2000);
+              if (window._infoRestoreTimeout) {
+                clearTimeout(window._infoRestoreTimeout);
+              }
+              window._infoRestoreTimeout = setTimeout(()=>{
+                $('info').textContent = window._infoPrevText || '';
+                window._infoRestoreTimeout = null;
+                window._infoPrevText = null;
+              }, 2000);
             }
           });
           list.appendChild(li);
