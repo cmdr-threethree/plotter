@@ -9,6 +9,18 @@ async function search(q){
 
 function renderSuggestions(container, items){
   container.innerHTML = '';
+  if(!items || items.length === 0){
+    // show explicit no-matches message when user typed something
+    const input = container.previousElementSibling;
+    if (input && input.value && input.value.trim() !== ''){
+      const no = document.createElement('div');
+      no.className = 'suggest';
+      no.style.opacity = '0.7';
+      no.textContent = 'No matches';
+      container.appendChild(no);
+    }
+    return;
+  }
   items.slice(0,5).forEach(it => {
     const div = document.createElement('div');
     div.className = 'suggest';
@@ -46,6 +58,26 @@ $('find').addEventListener('click', async ()=>{
   const target = $('target').value.trim();
   const max_hop = parseFloat($('max-hop').value) || 40;
   const bucket_size = parseFloat($('bucket-size').value) || 50;
+  // basic validation
+  if(!source || !target){
+    $('info').textContent = 'Enter both source and target';
+    return;
+  }
+  // quick pre-check: ensure source/target resolve to at least one system
+  try{
+    const [sres, tres] = await Promise.all([search(source), search(target)]);
+    if(!sres || sres.length === 0){
+      $('info').textContent = `Source not found: ${source}`;
+      return;
+    }
+    if(!tres || tres.length === 0){
+      $('info').textContent = `Target not found: ${target}`;
+      return;
+    }
+  }catch(e){
+    // ignore and proceed to let server return proper error
+  }
+
   $('info').textContent = 'Searching...';
   $('path-list').innerHTML = '';
   // close previous EventSource if any
