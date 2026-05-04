@@ -40,6 +40,7 @@ $('target').addEventListener('input', (e)=>{
   }, 200);
 });
 
+let es = null;
 $('find').addEventListener('click', async ()=>{
   const source = $('source').value.trim();
   const target = $('target').value.trim();
@@ -47,26 +48,42 @@ $('find').addEventListener('click', async ()=>{
   const bucket_size = parseFloat($('bucket-size').value) || 50;
   $('info').textContent = 'Searching...';
   $('path-list').innerHTML = '';
-  try{
-    const res = await fetch('/api/path', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({source, target, max_hop, bucket_size})
-    });
-    if(!res.ok){
-      const err = await res.json();
-      $('info').textContent = err.error || 'No path';
-      return;
-    }
-    const data = await res.json();
-    $('info').textContent = `Total distance: ${data.total.toFixed(1)}`;
-    const list = $('path-list');
-    data.path.forEach((p, i)=>{
-      const li = document.createElement('li');
-      li.innerHTML = `<strong>${i+1}) ${p.name}</strong> id=${p.id64} coords=(${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) hop=${p.hop_dist.toFixed(1)} mainStar=${p.mainStar || ''}`;
-      list.appendChild(li);
-    });
-  }catch(err){
-    $('info').textContent = String(err);
+  // close previous EventSource if any
+  if(es){
+    es.close();
+    es = null;
   }
+  const params = new URLSearchParams({source, target, max_hop, bucket_size});
+  es = new EventSource(`/api/path/stream?${params.toString()}`);
+  es.addEventListener('progress', (ev)=>{
+    try{
+      const txt = ev.data;
+      $('info').textContent = txt;
+    }catch(e){/*ignore*/}
+  });
+  es.addEventListener('result', (ev)=>{
+    try{
+      const data = JSON.parse(ev.data);
+      if(data.error){
+        $('info').textContent = data.error;
+      }else{
+        $('info').textContent = `Total distance: ${data.total.toFixed(1)}`;
+        const list = $('path-list');
+        data.path.forEach((p, i)=>{
+          const li = document.createElement('li');
+          li.innerHTML = `<strong>${i+1}) ${p.name}</strong> id=${p.id64} coords=(${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) hop=${p.hop_dist.toFixed(1)} mainStar=${p.mainStar || ''}`;
+          list.appendChild(li);
+        });
+      }
+    }catch(e){
+      $('info').textContent = 'Error parsing result';
+    }finally{
+      if(es){ es.close(); es = null; }
+    }
+  });
+  es.onerror = (ev)=>{
+    // show network/stream error
+    $('info').textContent = 'Stream error or connection closed';
+    if(es){ es.close(); es = null; }
+  };
 });
