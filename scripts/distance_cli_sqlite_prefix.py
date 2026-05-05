@@ -728,7 +728,7 @@ def main():
             near_coords = cand[0]['coords']
         # perform SQL nearest search among matching star_type_ids
         placeholders = ','.join('?' for _ in type_ids)
-        sql = f"SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,((x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?)) as d2 FROM systems WHERE star_type_id IN ({placeholders}) ORDER BY d2 LIMIT 1"
+        sql = "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,((x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?)) as d2 FROM systems WHERE star_type_id IN (" + placeholders + ") ORDER BY d2 LIMIT 1"
         params = [near_coords['x'], near_coords['x'], near_coords['y'], near_coords['y'], near_coords['z'], near_coords['z']] + type_ids
         cur = conn.execute(sql, tuple(params))
         row = cur.fetchone()

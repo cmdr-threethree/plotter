@@ -36,16 +36,9 @@ def api_search():
     q = request.args.get('q', '').strip()
     if not q:
         return jsonify([])
-    db = request.args.get('db', DB_PATH)
-    meta_path = request.args.get('meta', META_PATH)
-    # load meta if different
+    # Do not allow clients to supply arbitrary db/meta paths — use configured paths only
+    db = DB_PATH
     meta_local = META
-    if meta_path != META_PATH:
-        try:
-            with open(meta_path, 'r', encoding='utf-8') as mf:
-                meta_local = json.load(mf)
-        except Exception:
-            meta_local = META
     conn = distance.open_db(db)
     try:
         results = distance.get_system_by_query_prefix(conn, q, meta_local, limit=20)
@@ -60,21 +53,13 @@ def api_path():
     target_q = body.get('target')
     if not source_q or not target_q:
         return jsonify({'error': 'source and target required'}), 400
-    db = body.get('db', DB_PATH)
-    meta_path = body.get('meta', META_PATH)
+    # Do not allow clients to supply arbitrary db/meta paths — use configured paths only
+    db = DB_PATH
+    meta_local = META
     max_hop = float(body.get('max_hop', 40.0))
     bucket_size = float(body.get('bucket_size', BUCKET_SIZE_DEFAULT))
     step_threshold = float(body.get('step_threshold', 1.0))
     step_expand_factor = float(body.get('step_expand_factor', 2.0))
-
-    # load meta
-    meta_local = META
-    if meta_path != META_PATH:
-        try:
-            with open(meta_path, 'r', encoding='utf-8') as mf:
-                meta_local = json.load(mf)
-        except Exception:
-            meta_local = META
 
     conn = distance.open_db(db)
     try:
@@ -126,35 +111,20 @@ def api_path_stream():
     target_q = request.args.get('target')
     if not source_q or not target_q:
         return jsonify({'error': 'source and target required'}), 400
-    db = request.args.get('db', DB_PATH)
-    meta_path = request.args.get('meta', META_PATH)
+    # Do not allow clients to supply arbitrary db/meta paths — use configured paths only
+    db = DB_PATH
+    meta_local = META
     max_hop = float(request.args.get('max_hop', 40.0))
     bucket_size = float(request.args.get('bucket_size', BUCKET_SIZE_DEFAULT))
     step_threshold = float(request.args.get('step_threshold', 1.0))
     step_expand_factor = float(request.args.get('step_expand_factor', 2.0))
 
-    # load meta
-    meta_local = META
-    if meta_path != META_PATH:
-        try:
-            with open(meta_path, 'r', encoding='utf-8') as mf:
-                meta_local = json.load(mf)
-        except Exception:
-            meta_local = META
+    # use configured META (do not load client-supplied meta)
+    # meta_local is already set
 
-    progress_q = queue.Queue()
-    result_q = queue.Queue()
-
-    class Writer:
-        def write(self, s):
-            if s is None:
-                return
-            try:
-                progress_q.put(s)
-            except Exception:
-                pass
-        def flush(self):
-            pass
+    # bounded queues to reduce resource abuse
+    progress_q = queue.Queue(maxsize=256)
+    result_q = queue.Queue(maxsize=2)
 
     def worker():
         # open DB in this thread
@@ -170,11 +140,8 @@ def api_path_stream():
             # define on_progress callback that pushes to progress_q (non-blocking, drop if full)
             def on_progress(msg: str):
                 try:
-                    # normalize newline-only
-                    if msg == '\n' or (isinstance(msg, str) and msg.endswith('\n')):
-                        progress_q.put_nowait(msg.strip())
-                    else:
-                        progress_q.put_nowait(str(msg))
+                    text = '\n'.join(str(msg).splitlines())
+                    progress_q.put_nowait(text)
                 except Exception:
                     # drop if queue is full or other errors
                     pass
@@ -260,4 +227,5 @@ def static_proxy(path):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    debug = os.environ.get('DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=port, debug=debug)

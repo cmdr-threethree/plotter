@@ -103,7 +103,12 @@ $('find').addEventListener('click', async ()=>{
         const list = $('path-list');
         data.path.forEach((p, i)=>{
           const li = document.createElement('li');
-          li.innerHTML = `<strong>${i+1}) ${p.name}</strong> id=${p.id64} coords=(${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) hop=${p.hop_dist.toFixed(1)} mainStar=${p.mainStar || ''}`;
+          // Build DOM nodes safely to avoid XSS — do not use innerHTML with untrusted data
+          const strong = document.createElement('strong');
+          strong.textContent = `${i+1}) ${p.name}`;
+          li.appendChild(strong);
+          const meta = document.createTextNode(` id=${p.id64} coords=(${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) hop=${p.hop_dist.toFixed(1)} mainStar=${p.mainStar || ''}`);
+          li.appendChild(meta);
           // click to copy system name to clipboard
           li.style.cursor = 'pointer';
           li.title = 'Click to copy system name';
