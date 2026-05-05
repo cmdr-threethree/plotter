@@ -398,12 +398,25 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
     return res
 
 
-def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, bucket_size: float, meta: Dict, max_nodes: int = 500, max_neighbors: int = 200, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None) -> Optional[List[Dict]]:
+def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, bucket_size: float, meta: Dict, max_nodes: int = 500, max_neighbors: int = 200, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
     """Greedy approximate walk: quick fallback that moves to the neighbor closest to the target.
 
     This is a lightweight replacement for the old 'fast' branch. It returns a path (including source and target)
     or None if it gets stuck or cannot reach the target within max_nodes.
+    on_progress: optional callback(msg) for progress updates.
     """
+    def _emit(msg: str):
+        try:
+            if on_progress:
+                on_progress(msg)
+            else:
+                if msg == '\n':
+                    print()
+                else:
+                    print(msg, end='\r', flush=True)
+        except Exception:
+            pass
+
     cur = source
     visited = set([cur['id64']])
     path = [cur]
@@ -412,7 +425,7 @@ def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
     while nodes_examined < max_nodes:
         nodes_examined += 1
         if nodes_examined % PROGRESS_INTERVAL == 0:
-            print(f"Greedy progress: examined {nodes_examined} nodes; path_len={len(path)}", end='\r', flush=True)
+            _emit(f"Greedy progress: examined {nodes_examined} nodes; path_len={len(path)}")
         # if target within one hop, finish
         dx = cur['coords']['x'] - target['coords']['x']
         dy = cur['coords']['y'] - target['coords']['y']
@@ -420,7 +433,7 @@ def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
         if dx*dx + dy*dy + dz*dz <= max_hop*max_hop:
             path.append(target)
             if nodes_examined >= PROGRESS_INTERVAL:
-                print()
+                _emit('\n')
             return path
         neighbors = neighbors_for_center_prefix(conn, cur, max_hop, visited, bucket_size, max_neighbors=max_neighbors, meta=meta, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
         if not neighbors:
@@ -453,7 +466,7 @@ def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
         path.append(best)
         cur = best
     if nodes_examined >= PROGRESS_INTERVAL:
-        print()
+        _emit('\n')
     return None
 
 
@@ -586,7 +599,7 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
                     _emit('Directional: falling back to short greedy search...')
                 except Exception:
                     pass
-                greedy_path = find_path_greedy(conn, cur, target, max_hop, bucket_size, meta, max_nodes=greedy_nodes, max_neighbors=greedy_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
+                greedy_path = find_path_greedy(conn, cur, target, max_hop, bucket_size, meta, max_nodes=greedy_nodes, max_neighbors=greedy_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets, on_progress=_emit)
                 if greedy_path:
                     # attach greedy path (skip duplicate current)
                     path.extend(greedy_path[1:])
