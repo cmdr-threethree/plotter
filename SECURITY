@@ -1,0 +1,97 @@
+❯ analyze web app for security issues
+
+● Good checklist and prioritized fixes. I inspected webapp and the imported CLI module and found the key security issues,
+  risks, and concrete mitigations.
+
+  High-risk issues (urgent)
+
+   1. Arbitrary file access via API params (webapp/app.py)
+   - Problem: /api/search, /api/path and /api/path/stream accept db and meta path from requests and open them directly.
+   - Risk: remote client can read any file the process can open (data exfiltration / local file disclosure).
+   - Fix: allow only configured DB/meta paths (ENV or config), or validate/whitelist paths. Never open arbitrary
+  client-supplied filesystem paths.
+   2. Debug mode enabled in dev server
+   - Problem: app.run(..., debug=True) in webapp/app.py
+   - Risk: Werkzeug interactive debugger can execute arbitrary code if enabled in production.
+   - Fix: set debug=False and use production WSGI server (gunicorn/uvicorn) for deployment.
+   3. XSS via innerHTML (frontend webapp/static/app.js)
+   - Problem: result and suggestion rendering use innerHTML with p.name inserted.
+   - Risk: stored XSS if DB contains malicious names.
+   - Fix: render text with textContent or create text nodes and separate elements (avoid innerHTML). Example:
+   - li.textContent = ''; const strong = document.createElement('strong'); strong.textContent = ${i+1}) ${p.name};
+  li.appendChild(strong); ... set other fields via textContent or small spans.
+   4. Unbounded progress queue and stdout capture (webapp/app.py)
+   - Problems:
+   - progress_q is unbounded queue.Queue() — a misbehaving or malicious request that prints a lot can exhaust memory (DoS).
+   - Worker replaces sys.stdout (module global) — this affects whole process, race condition with other threads, and may
+  capture unrelated output.
+   - Risks: memory exhaustion, information leakage, unpredictable behavior.
+   - Fixes:
+   - Use bounded queue: progress_q = queue.Queue(maxsize=256) and drop/trim messages when full.
+   - Avoid reassigning sys.stdout. Instead:
+   - Preferred: modify distance.find_path_directional to accept an optional callback or logger to receive progress messages;
+  call that callback from the pathfinder.
+   - If that refactor is not possible, capture output using subprocess-like isolated logger or use Python's logging with a
+  thread-local handler; or use contextlib.redirect_stdout but be aware it still assigns global sys.stdout — better to refactor
+  pathfinder.
+
+  Medium-risk / best-practice issues 5) No authentication, rate limiting, or resource quotas
+
+   - Risk: API can be abused (heavy path requests).
+   - Fix: add authentication (API keys), rate limits (Flask-Limiter), per-request timeouts and max_nodes caps enforced
+  server-side.
+
+   1. SSE endpoint using GET query params
+   - Note: GET is okay for SSE but be cautious: URLs may be logged (sensitive inputs). If names are sensitive, prefer POST with
+   a job ID flow.
+   2. Static file serving route
+   - webapp/app.py uses send_from_directory — OK for static folder; ensure static_folder is locked to that directory. Avoid
+  exposing parent directories.
+   3. Insufficient input validation
+   - Validate numeric params (max_hop, bucket_size, step_threshold) ranges to prevent extreme values.
+   4. JSON error handling & leakage
+   - Ensure stack traces are not returned to the client; catch exceptions and return sanitized messages.
+   5. Clipboard fallback uses document.execCommand('copy')
+
+   - Browser API; not a security issue but be aware of UX/perms.
+
+  Concrete quick fixes to apply now (safe, minimal)
+
+   - Prevent arbitrary db/meta paths (in webapp/app.py):
+   - Replace reading request-supplied db/meta with:
+   - only use DB_PATH and META_PATH from env/config, or
+   - validate that provided path matches allowed basename(s) inside a configured data directory.
+   - Disable debug mode:
+   - In the bottom of app.py change app.run(... debug=False) or remove debug argument.
+   - Add bounded queue and drop-on-full:
+   - progress_q = queue.Queue(maxsize=256)
+   - In Writer.write: try: progress_q.put_nowait(s) except queue.Full: pass
+   - Replace innerHTML usage in webapp/static/app.js with safe DOM creation using textContent (I can prepare a patch).
+   - Limit worker resource usage: pass max_nodes and max_neighbors from request and cap them server-side to safe limits (e.g.,
+  max_nodes <= 10000).
+
+  Recommended refactor (medium effort, highest quality)
+
+   - Modify scripts/distance_cli_sqlite_prefix.py:
+   - Add optional progress callback parameter to find_path_directional (e.g., on_progress(msg: str)). Use that instead of
+  printing.
+   - This eliminates sys.stdout capturing and makes streaming safe and explicit.
+   - Implement server-side job queue:
+   - POST /api/path creates a job (returns job id).
+   - GET /api/path/stream?id=... attaches SSE to that job's progress (controlled lifecycle).
+   - This avoids long-running request blocking and improves concurrency control, auth, and quotas.
+
+  Monitoring & deployment recommendations
+
+   - Deploy behind HTTPS, use a production WSGI server, enable access logging and request rate metrics.
+   - Add authentication or IP allowlist if the API will be public.
+   - Add resource monitoring & alerting for queue growth / high CPU from pathfinding.
+
+  If you want, I can:
+
+   - Implement the quick fixes now (disable debug, bound queue, block arbitrary db/meta, and fix innerHTML → safe DOM).
+   - Or implement the refactor (add on_progress callback in the pathfinder and update server to use it) which is slightly
+  larger but more robust.
+
+  Which approach do you want me to implement?
+
