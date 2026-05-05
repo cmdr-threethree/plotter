@@ -33,7 +33,7 @@ import os
 import sqlite3
 import sys
 from collections import Counter
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Callable
 
 DEFAULT_JSON = "systems_neutron.json"
 DEFAULT_DB = "systems_index.db"
@@ -457,7 +457,7 @@ def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
     return None
 
 
-def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, bucket_size: float, meta: Dict, max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.05, fallback_to_greedy: bool = True, greedy_nodes: int = 500, greedy_neighbors: int = 200) -> Optional[List[Dict]]:
+def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, bucket_size: float, meta: Dict, max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.05, fallback_to_greedy: bool = True, greedy_nodes: int = 500, greedy_neighbors: int = 200, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
     """Directional stepping pathfinder (approximate, fast).
 
     From current system, compute a point max_hop towards target and search for a system near that point within an expanding radius starting at step_threshold.
@@ -472,6 +472,19 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
     path = [cur]
     visited = set([cur['id64']])
     nodes = 0
+    def _emit(msg: str):
+        try:
+            if on_progress:
+                on_progress(msg)
+            else:
+                # CLI fallback: mimic previous behavior (carriage-return updates)
+                if msg == '\n':
+                    print()
+                else:
+                    print(msg, end='\r', flush=True)
+        except Exception:
+            pass
+
     while nodes < max_nodes:
         nodes += 1
         # progress indicator per step
@@ -481,7 +494,7 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
                 dy_t = target['coords']['y'] - cur['coords']['y']
                 dz_t = target['coords']['z'] - cur['coords']['z']
                 dist_to_target = math.sqrt(dx_t*dx_t + dy_t*dy_t + dz_t*dz_t)
-                print(f"Directional step {nodes}: at id={cur['id64']} dist_to_target={dist_to_target:.1f} path_len={len(path)}", end='\r', flush=True)
+                _emit(f"Directional step {nodes}: at id={cur['id64']} dist_to_target={dist_to_target:.1f} path_len={len(path)}")
             except Exception:
                 pass
 
@@ -492,7 +505,7 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
         if dx*dx + dy*dy + dz*dz <= max_hop*max_hop:
             path.append(target)
             if nodes >= PROGRESS_INTERVAL:
-                print()
+                _emit('\n')
             return path
 
         # compute step point max_hop away from cur towards target
@@ -513,7 +526,7 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
             # progress on radius
             if nodes % PROGRESS_INTERVAL == 0:
                 try:
-                    print(f"  trying radius={radius:.3f}", end='\r', flush=True)
+                    _emit(f"  trying radius={radius:.3f}")
                 except Exception:
                     pass
             fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
@@ -543,7 +556,7 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
             while radius <= relaxed_max:
                 if nodes % PROGRESS_INTERVAL == 0:
                     try:
-                        print(f"  trying relaxed radius={radius:.3f} (relaxed max {relaxed_max:.3f})", end='\r', flush=True)
+                        _emit(f"  trying relaxed radius={radius:.3f} (relaxed max {relaxed_max:.3f})")
                     except Exception:
                         pass
                 fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
@@ -568,9 +581,9 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
             # fallback to a short greedy search from current point to attempt to reach target
             if fallback_to_greedy:
                 if nodes >= PROGRESS_INTERVAL:
-                    print()
+                    _emit('\n')
                 try:
-                    print("Directional: falling back to short greedy search...", flush=True)
+                    _emit('Directional: falling back to short greedy search...')
                 except Exception:
                     pass
                 greedy_path = find_path_greedy(conn, cur, target, max_hop, bucket_size, meta, max_nodes=greedy_nodes, max_neighbors=greedy_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
@@ -578,10 +591,10 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
                     # attach greedy path (skip duplicate current)
                     path.extend(greedy_path[1:])
                     if nodes >= PROGRESS_INTERVAL:
-                        print()
+                        _emit('\n')
                     return path
             if nodes >= PROGRESS_INTERVAL:
-                print()
+                _emit('\n')
             return None
 
         # append found and continue
@@ -589,7 +602,7 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
         path.append(found)
         cur = found
     if nodes >= PROGRESS_INTERVAL:
-        print()
+        _emit('\n')
     return None
 
 
@@ -784,7 +797,15 @@ def main():
             rec = {'id64': r[0], 'prefix_id': r[1], 'name_suffix': r[2], 'x': r[3], 'y': r[4], 'z': r[5], 'star_type_id': r[6]}
             in_memory_buckets.setdefault((bx_i, by_i, bz_i), []).append(rec)
 
-    path = find_path_directional(conn, s1, s2, args.max_hop, args.bucket_size, meta, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets)
+    def cli_progress(msg: str):
+        if msg is None:
+            return
+        if msg == '\n':
+            print()
+        else:
+            print(msg, end='\r', flush=True)
+
+    path = find_path_directional(conn, s1, s2, args.max_hop, args.bucket_size, meta, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets, on_progress=cli_progress)
     if path is None:
         print('No path found')
         return

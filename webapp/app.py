@@ -87,7 +87,10 @@ def api_path():
         # choose first match for now
         s = s_list[0]
         t = t_list[0]
-        path = distance.find_path_directional(conn, s, t, max_hop, bucket_size, meta_local, step_threshold=step_threshold, expand_factor=step_expand_factor)
+        # silent progress callback for the HTTP API (no streaming)
+        def noop_progress(msg: str):
+            return
+        path = distance.find_path_directional(conn, s, t, max_hop, bucket_size, meta_local, step_threshold=step_threshold, expand_factor=step_expand_factor, on_progress=noop_progress)
         if path is None:
             return jsonify({'error': 'No path found'}), 404
         # compute hop distances and total
@@ -163,13 +166,24 @@ def api_path_stream():
                 result_q.put({'error': 'source or target not found'})
                 return
             s = s_list[0]; t = t_list[0]
-            # redirect stdout to writer for this thread
-            orig_stdout = sys.stdout
-            sys.stdout = Writer()
+
+            # define on_progress callback that pushes to progress_q (non-blocking, drop if full)
+            def on_progress(msg: str):
+                try:
+                    # normalize newline-only
+                    if msg == '\n' or (isinstance(msg, str) and msg.endswith('\n')):
+                        progress_q.put_nowait(msg.strip())
+                    else:
+                        progress_q.put_nowait(str(msg))
+                except Exception:
+                    # drop if queue is full or other errors
+                    pass
+
             try:
-                path = distance.find_path_directional(conn, s, t, max_hop, bucket_size, meta_local, step_threshold=step_threshold, expand_factor=step_expand_factor)
-            finally:
-                sys.stdout = orig_stdout
+                path = distance.find_path_directional(conn, s, t, max_hop, bucket_size, meta_local, step_threshold=step_threshold, expand_factor=step_expand_factor, on_progress=on_progress)
+            except Exception as e:
+                result_q.put({'error': str(e)})
+                return
             if path is None:
                 result_q.put({'error': 'No path found'})
                 return
