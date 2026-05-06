@@ -75,7 +75,8 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         # Build meta
         mod.build_meta(self.json_path, self.schema_path, self.meta_path)
         self.assertTrue(os.path.exists(self.meta_path))
-        meta = json.load(open(self.meta_path, 'r', encoding='utf-8'))
+        with open(self.meta_path, 'r', encoding='utf-8') as f:
+            meta = json.load(f)
         self.assertIn('prefixes', meta)
         self.assertIn('starTypes', meta)
         # prefixes should include 'Sol' and 'FarAway' (FarAway may be full name prefix)
@@ -83,7 +84,7 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         self.assertIn('Sol', prefixes)
 
         # Build index (force to ensure clean DB)
-        mod.build_index_prefix(self.json_path, self.db_path, bucket_size=50.0, meta_path=self.meta_path, force=True)
+        mod.build_index_prefix(self.json_path, self.db_path, bucket_size=50.0, meta_path=self.meta_path, force=True, coord_scale=32)
         self.assertTrue(os.path.exists(self.db_path))
 
         conn = sqlite3.connect(self.db_path)
@@ -91,8 +92,16 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         cur.execute('SELECT COUNT(*) FROM systems')
         count = cur.fetchone()[0]
 
+        # load DB parameters
+        coord_scale = int(conn.execute('SELECT value FROM db_meta WHERE key="coord_scale"').fetchone()[0])
+        
+        # Pre-build maps as mod.main does
+        id_to_prefix = {int(k): v for k, v in meta.get('prefixes', {}).items()}
+        id_to_star = {int(k): v for k, v in meta.get('starTypes', {}).items()}
+
         # compute expected rows by reading the json and counting non-permit entries
-        systems = json.load(open(self.json_path, 'r', encoding='utf-8'))
+        with open(self.json_path, 'r', encoding='utf-8') as f:
+            systems = json.load(f)
         expected_rows = sum(1 for s in systems if not s.get('needsPermit'))
         self.assertEqual(count, expected_rows)
 
@@ -105,29 +114,41 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         second_sys = non_permit[second_idx]
 
         # Test id lookup via get_system_by_query_prefix
-        res = mod.get_system_by_query_prefix(conn, str(first_sys['id64']), meta)
+        res = mod.get_system_by_query_prefix(conn, str(first_sys['id64']), meta, id_to_prefix, id_to_star, coord_scale)
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]['id64'], first_sys['id64'])
 
         # Test exact name lookup: full name must match prefix+suffix
-        res2 = mod.get_system_by_query_prefix(conn, first_sys['name'], meta)
+        res2 = mod.get_system_by_query_prefix(conn, first_sys['name'], meta, id_to_prefix, id_to_star, coord_scale)
         self.assertEqual(len(res2), 1)
         self.assertEqual(res2[0]['id64'], first_sys['id64'])
 
         # Non-existing exact name should return empty
-        res3 = mod.get_system_by_query_prefix(conn, 'Nonexistent-System', meta)
+        res3 = mod.get_system_by_query_prefix(conn, 'Nonexistent-System', meta, id_to_prefix, id_to_star, coord_scale)
         self.assertEqual(len(res3), 0)
 
         # Pathfinding between the two chosen systems using max_hop=40 (nodes are spaced 30 apart in sample_large)
         s1 = res2[0]
-        s2 = mod.get_system_by_query_prefix(conn, second_sys['name'], meta)[0]
-        path = mod.find_path_directional(conn, s1, s2, max_hop=40.0, bucket_size=50.0, meta=meta, max_nodes=1000, max_neighbors=200)
+        s2 = mod.get_system_by_query_prefix(conn, second_sys['name'], meta, id_to_prefix, id_to_star, coord_scale)[0]
+        path = mod.find_path_directional(conn, s1, s2, max_hop=40.0, coord_scale=coord_scale, id_to_prefix=id_to_prefix, id_to_star=id_to_star, max_nodes=1000, max_neighbors=200)
         self.assertIsNotNone(path)
         ids = [p['id64'] for p in path]
         self.assertEqual(ids[0], first_sys['id64'])
         self.assertEqual(ids[-1], second_sys['id64'])
         # path should have at least 2 nodes
         self.assertTrue(len(ids) >= 2)
+
+        # Test nearest_of_type
+        # Find nearest system of the same type as first_sys
+        star_name_to_id = {v: int(k) for k, v in meta.get('starTypes', {}).items()}
+        first_star_type = first_sys.get('mainStar')
+        type_id = star_name_to_id.get(first_star_type)
+        if type_id is not None:
+            near_coords = first_sys['coords']
+            res_nearest = mod.nearest_of_type(conn, near_coords, [type_id], coord_scale)
+            self.assertIsNotNone(res_nearest)
+            # It should find first_sys itself as it's at the exact coordinates
+            self.assertEqual(res_nearest['id64'], first_sys['id64'])
 
         conn.close()
 

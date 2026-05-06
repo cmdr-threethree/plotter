@@ -4,6 +4,7 @@ import json
 from flask import Flask, request, jsonify, send_from_directory, stream_with_context, Response
 import threading
 import queue
+import sqlite3
 
 # Ensure scripts dir is importable so we can reuse logic without modifying it
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -18,12 +19,26 @@ DB_PATH = os.environ.get('PLOTTER_DB', distance.DEFAULT_DB)
 META_PATH = os.environ.get('PLOTTER_META', distance.DEFAULT_META)
 BUCKET_SIZE_DEFAULT = 50.0
 
-# Load meta (best-effort)
+# Load meta and pre-build lookup maps
 try:
     with open(META_PATH, 'r', encoding='utf-8') as mf:
         META = json.load(mf)
+    ID_TO_PREFIX = {int(k): v for k, v in META.get('prefixes', {}).items()}
+    ID_TO_STAR = {int(k): v for k, v in META.get('starTypes', {}).items()}
 except Exception:
     META = {}
+    ID_TO_PREFIX = {}
+    ID_TO_STAR = {}
+
+def get_db_params(conn: sqlite3.Connection):
+    """Load coord_scale and bucket_size from db_meta table."""
+    try:
+        coord_scale = int(conn.execute('SELECT value FROM db_meta WHERE key="coord_scale"').fetchone()[0])
+        bucket_size = float(conn.execute('SELECT value FROM db_meta WHERE key="bucket_size"').fetchone()[0])
+        return coord_scale, bucket_size
+    except Exception:
+        # Fallback for old/uninitialized DBs
+        return 1, BUCKET_SIZE_DEFAULT
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 
@@ -36,12 +51,11 @@ def api_search():
     q = request.args.get('q', '').strip()
     if not q:
         return jsonify([])
-    # Do not allow clients to supply arbitrary db/meta paths — use configured paths only
     db = DB_PATH
-    meta_local = META
     conn = distance.open_db(db)
     try:
-        results = distance.get_system_by_query_prefix(conn, q, meta_local, limit=20)
+        coord_scale, _ = get_db_params(conn)
+        results = distance.get_system_by_query_prefix(conn, q, META, ID_TO_PREFIX, ID_TO_STAR, coord_scale, limit=20)
     finally:
         conn.close()
     return jsonify(results)
@@ -53,29 +67,24 @@ def api_path():
     target_q = body.get('target')
     if not source_q or not target_q:
         return jsonify({'error': 'source and target required'}), 400
-    # Do not allow clients to supply arbitrary db/meta paths — use configured paths only
     db = DB_PATH
-    meta_local = META
     max_hop = float(body.get('max_hop', 40.0))
-    bucket_size = float(body.get('bucket_size', BUCKET_SIZE_DEFAULT))
-    step_threshold = float(body.get('step_threshold', 1.0))
-    step_expand_factor = float(body.get('step_expand_factor', 2.0))
 
     conn = distance.open_db(db)
     try:
-        s_list = distance.get_system_by_query_prefix(conn, source_q, meta_local, limit=10)
-        t_list = distance.get_system_by_query_prefix(conn, target_q, meta_local, limit=10)
+        coord_scale, _ = get_db_params(conn)
+        s_list = distance.get_system_by_query_prefix(conn, source_q, META, ID_TO_PREFIX, ID_TO_STAR, coord_scale, limit=10)
+        t_list = distance.get_system_by_query_prefix(conn, target_q, META, ID_TO_PREFIX, ID_TO_STAR, coord_scale, limit=10)
         if not s_list:
             return jsonify({'error': f'source not found: {source_q}'}), 404
         if not t_list:
             return jsonify({'error': f'target not found: {target_q}'}), 404
-        # choose first match for now
         s = s_list[0]
         t = t_list[0]
-        # silent progress callback for the HTTP API (no streaming)
         def noop_progress(msg: str):
             return
-        path = distance.find_path_directional(conn, s, t, max_hop, bucket_size, meta_local, step_threshold=step_threshold, expand_factor=step_expand_factor, on_progress=noop_progress)
+        # find_path_directional now takes coord_scale, ID_TO_PREFIX, ID_TO_STAR instead of meta, bucket_size
+        path = distance.find_path_directional(conn, s, t, max_hop, coord_scale, ID_TO_PREFIX, ID_TO_STAR, on_progress=noop_progress)
         if path is None:
             return jsonify({'error': 'No path found'}), 404
         # compute hop distances and total
@@ -106,55 +115,42 @@ def api_path():
 
 @app.route('/api/path/stream')
 def api_path_stream():
-    # stream path progress using Server-Sent Events (SSE). Accepts query params: source, target, max_hop, bucket_size
     source_q = request.args.get('source')
     target_q = request.args.get('target')
     if not source_q or not target_q:
         return jsonify({'error': 'source and target required'}), 400
-    # Do not allow clients to supply arbitrary db/meta paths — use configured paths only
     db = DB_PATH
-    meta_local = META
     max_hop = float(request.args.get('max_hop', 40.0))
-    bucket_size = float(request.args.get('bucket_size', BUCKET_SIZE_DEFAULT))
-    step_threshold = float(request.args.get('step_threshold', 1.0))
-    step_expand_factor = float(request.args.get('step_expand_factor', 2.0))
 
-    # use configured META (do not load client-supplied meta)
-    # meta_local is already set
-
-    # bounded queues to reduce resource abuse
     progress_q = queue.Queue(maxsize=256)
     result_q = queue.Queue(maxsize=2)
 
     def worker():
-        # open DB in this thread
         conn = distance.open_db(db)
         try:
-            s_list = distance.get_system_by_query_prefix(conn, source_q, meta_local, limit=10)
-            t_list = distance.get_system_by_query_prefix(conn, target_q, meta_local, limit=10)
+            coord_scale, _ = get_db_params(conn)
+            s_list = distance.get_system_by_query_prefix(conn, source_q, META, ID_TO_PREFIX, ID_TO_STAR, coord_scale, limit=10)
+            t_list = distance.get_system_by_query_prefix(conn, target_q, META, ID_TO_PREFIX, ID_TO_STAR, coord_scale, limit=10)
             if not s_list or not t_list:
                 result_q.put({'error': 'source or target not found'})
                 return
             s = s_list[0]; t = t_list[0]
 
-            # define on_progress callback that pushes to progress_q (non-blocking, drop if full)
             def on_progress(msg: str):
                 try:
                     text = '\n'.join(str(msg).splitlines())
                     progress_q.put_nowait(text)
                 except Exception:
-                    # drop if queue is full or other errors
                     pass
 
             try:
-                path = distance.find_path_directional(conn, s, t, max_hop, bucket_size, meta_local, step_threshold=step_threshold, expand_factor=step_expand_factor, on_progress=on_progress)
+                path = distance.find_path_directional(conn, s, t, max_hop, coord_scale, ID_TO_PREFIX, ID_TO_STAR, on_progress=on_progress)
             except Exception as e:
                 result_q.put({'error': str(e)})
                 return
             if path is None:
                 result_q.put({'error': 'No path found'})
                 return
-            # compute path output
             total = 0.0
             out = []
             prev = None

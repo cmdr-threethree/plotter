@@ -42,9 +42,6 @@ DEFAULT_META = "systems_meta.json"
 BATCH_SIZE = 1000
 PROGRESS_INTERVAL = 10
 
-# global bucket cache for lazy loading: (bx,by,bz) -> list of records
-global_bucket_cache = {}
-
 
 def clean_json_line(line: str) -> Optional[str]:
     s = line.strip()
@@ -152,43 +149,57 @@ def open_db(path: str) -> sqlite3.Connection:
     conn.execute('PRAGMA journal_mode=WAL;')
     conn.execute('PRAGMA synchronous=OFF;')
     conn.execute('PRAGMA temp_store=MEMORY;')
+    conn.execute('PRAGMA cache_size = -65536;')   # 64 MB page cache
+    conn.execute('PRAGMA mmap_size = 2147483648;') # 2 GB memory-mapped reads
     return conn
 
 
 def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
+    # Create systems table with INTEGER coordinates
     cur.execute('''
         CREATE TABLE IF NOT EXISTS systems (
             id64 INTEGER PRIMARY KEY,
             prefix_id INTEGER,
-            x REAL,
-            y REAL,
-            z REAL,
+            x INTEGER,
+            y INTEGER,
+            z INTEGER,
             star_type_id INTEGER,
-            bx INTEGER,
-            by INTEGER,
-            bz INTEGER,
             name_suffix TEXT
         )
     ''')
-    cur.execute('CREATE INDEX IF NOT EXISTS idx_buckets ON systems(bx,by,bz)')
+    # Create R-tree for spatial queries
+    cur.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS rtree_systems USING rtree(
+            id64,
+            min_x, max_x,
+            min_y, max_y,
+            min_z, max_z
+        )
+    ''')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_prefix ON systems(prefix_id)')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_star_type ON systems(star_type_id)')
-    # Ensure name_suffix column exists for older DBs
-    cur.execute("PRAGMA table_info(systems)")
-    cols = [r[1] for r in cur.fetchall()]
-    if 'name_suffix' not in cols:
-        cur.execute('ALTER TABLE systems ADD COLUMN name_suffix TEXT')
+    
+    # Meta table for DB parameters
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS db_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
     conn.commit()
 
 
-def build_index_prefix(json_path: str, db_path: str, bucket_size: float, meta_path: str, force: bool = False) -> None:
+def build_index_prefix(json_path: str, db_path: str, bucket_size: float, meta_path: str, coord_scale: int = 32, force: bool = False) -> None:
     if json_path != '-' and not os.path.exists(json_path):
         print(f"JSON file not found: {json_path}")
         sys.exit(1)
     if not os.path.exists(meta_path):
         print(f"Meta file not found: {meta_path}. Run --build-meta first.")
         sys.exit(1)
+
+    # If DB doesn't exist, we can set page_size
+    is_new_db = not os.path.exists(db_path) or force
     if force and os.path.exists(db_path):
         print(f"--force given: removing existing DB {db_path}")
         os.remove(db_path)
@@ -200,19 +211,30 @@ def build_index_prefix(json_path: str, db_path: str, bucket_size: float, meta_pa
     starTypes = meta.get('starTypes', {})
     star_to_id = {v: int(k) for k, v in starTypes.items()}
 
-    conn = open_db(db_path)
+    conn = sqlite3.connect(db_path)
+    if is_new_db:
+        conn.execute('PRAGMA page_size = 8192;')
+    conn.execute('PRAGMA journal_mode=WAL;')
+    conn.execute('PRAGMA synchronous=OFF;')
+    conn.execute('PRAGMA temp_store=MEMORY;')
+    
     ensure_schema_prefix(conn)
     cur = conn.cursor()
 
-    def bucket_coords(x: float, y: float, z: float) -> Tuple[int,int,int]:
-        return (math.floor(x / bucket_size), math.floor(y / bucket_size), math.floor(z / bucket_size))
+    # Store DB parameters
+    cur.execute('INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)', ('coord_scale', str(coord_scale)))
+    cur.execute('INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)', ('bucket_size', str(bucket_size)))
+    conn.commit()
 
-    insert_sql = 'INSERT OR IGNORE INTO systems (id64,prefix_id,x,y,z,star_type_id,bx,by,bz,name_suffix) VALUES (?,?,?,?,?,?,?,?,?,?)'
+    insert_sql = 'INSERT OR IGNORE INTO systems (id64,prefix_id,x,y,z,star_type_id,name_suffix) VALUES (?,?,?,?,?,?,?)'
+    rtree_sql = 'INSERT OR IGNORE INTO rtree_systems (id64,min_x,max_x,min_y,max_y,min_z,max_z) VALUES (?,?,?,?,?,?,?)'
+    
     batch: List[Tuple] = []
+    rtree_batch: List[Tuple] = []
     inserted = 0
     processed = 0
 
-    print('Starting prefix-compressed index build (resumable). Systems requiring permits are skipped.')
+    print(f'Starting index build (scale={coord_scale}, resumable). Systems requiring permits are skipped.')
     for line in iter_lines_from_source(json_path):
         processed += 1
         if processed % PROGRESS_INTERVAL == 0:
@@ -222,7 +244,6 @@ def build_index_prefix(json_path: str, db_path: str, bucket_size: float, meta_pa
         obj = parse_line_object(line)
         if obj is None:
             continue
-        # Skip systems that require a permit
         if obj.get('needsPermit'):
             continue
         try:
@@ -235,39 +256,46 @@ def build_index_prefix(json_path: str, db_path: str, bucket_size: float, meta_pa
             prefix = extract_prefix(name)
             prefix_id = prefix_to_id.get(prefix, 0)
             star_id = star_to_id.get(main_star, 0)
-            # store suffix including separator so prefix + suffix == original name
             suffix = name[len(prefix):]
-            x = float(coords['x']); y = float(coords['y']); z = float(coords['z'])
-            bx,by,bz = bucket_coords(x,y,z)
-            batch.append((sid, prefix_id, x, y, z, star_id, bx, by, bz, suffix))
+            
+            # Scaled coordinates
+            ix = int(round(float(coords['x']) * coord_scale))
+            iy = int(round(float(coords['y']) * coord_scale))
+            iz = int(round(float(coords['z']) * coord_scale))
+            
+            batch.append((sid, prefix_id, ix, iy, iz, star_id, suffix))
+            rtree_batch.append((sid, ix, ix, iy, iy, iz, iz))
         except Exception:
             continue
         if len(batch) >= BATCH_SIZE:
             cur.executemany(insert_sql, batch)
+            cur.executemany(rtree_sql, rtree_batch)
             conn.commit()
             inserted += len(batch)
             batch.clear()
+            rtree_batch.clear()
     if batch:
         cur.executemany(insert_sql, batch)
+        cur.executemany(rtree_sql, rtree_batch)
         conn.commit()
         inserted += len(batch)
         batch.clear()
+        rtree_batch.clear()
 
+    print('\nFinalizing: ANALYZE and VACUUM...')
     cur.execute('ANALYZE;')
     conn.commit()
+    cur.execute('VACUUM;')
     conn.close()
-    print(f"\nPrefix-compressed index build complete. Processed {processed} lines; inserted {inserted} rows into {db_path}.")
+    print(f"Index build complete. Processed {processed} lines; inserted {inserted} rows into {db_path}.")
 
 
-def get_system_by_query_prefix(conn: sqlite3.Connection, query: str, meta: Dict, limit: int = 10) -> List[Dict]:
+def get_system_by_query_prefix(conn: sqlite3.Connection, query: str, meta: Dict, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], coord_scale: int, limit: int = 10) -> List[Dict]:
     """Find systems by id64 or exact full-name match (prefix + name_suffix).
 
     Assumes the current prefix-compressed DB schema (prefix_id + name_suffix). Exact matches only — no LIKE or partial matching.
     """
     prefixes = meta.get('prefixes', {})
-    id_to_prefix = {int(k): v for k, v in prefixes.items()}
-    star_map = meta.get('starTypes', {})
-    id_to_star = {int(k): v for k, v in star_map.items()} if star_map else {}
 
     # Try id lookup first
     try:
@@ -277,7 +305,9 @@ def get_system_by_query_prefix(conn: sqlite3.Connection, query: str, meta: Dict,
         if row:
             name = id_to_prefix.get(row[1], '') + (row[2] or '')
             star = id_to_star.get(row[6], '') if len(row) > 6 else ''
-            return [{'id64': row[0], 'name': name, 'coords': {'x': row[3], 'y': row[4], 'z': row[5]}, 'mainStar': star}]
+            # Unscale coordinates
+            x, y, z = row[3] / coord_scale, row[4] / coord_scale, row[5] / coord_scale
+            return [{'id64': row[0], 'name': name, 'coords': {'x': x, 'y': y, 'z': z}, 'mainStar': star}]
     except ValueError:
         pass
 
@@ -293,98 +323,101 @@ def get_system_by_query_prefix(conn: sqlite3.Connection, query: str, meta: Dict,
         for r in cur:
             name = prefix + (r[2] or '')
             star = id_to_star.get(r[6], '')
-            out.append({'id64': r[0], 'name': name, 'coords': {'x': r[3], 'y': r[4], 'z': r[5]}, 'mainStar': star})
+            # Unscale coordinates
+            x, y, z = r[3] / coord_scale, r[4] / coord_scale, r[5] / coord_scale
+            out.append({'id64': r[0], 'name': name, 'coords': {'x': x, 'y': y, 'z': z}, 'mainStar': star})
             if len(out) >= limit:
                 return out
     return out
 
 
-def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_distance: float, visited: Set[int], bucket_size: float, max_neighbors: int = 500, meta: Optional[Dict] = None, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None) -> List[Dict]:
-    """Return cached nearby neighbors within max_distance for center.
+def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_distance: float, visited: Set[int], coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None) -> List[Dict]:
+    """Return cached nearby neighbors within max_distance for center using R-tree.
 
     Cache key ignores visited; visited filtering is applied after retrieving candidates.
     allowed_star_ids: if provided, only return neighbors whose star_type_id is in this set.
     """
-    bx = math.floor(center['coords']['x'] / bucket_size)
-    by = math.floor(center['coords']['y'] / bucket_size)
-    bz = math.floor(center['coords']['z'] / bucket_size)
-    rb = int(math.ceil(max_distance / bucket_size))
-
-    min_bx, max_bx = bx - rb, bx + rb
-    min_by, max_by = by - rb, by + rb
-    min_bz, max_bz = bz - rb, bz + rb
+    cx, cy, cz = center['coords']['x'], center['coords']['y'], center['coords']['z']
+    
+    # Scale search bounds
+    s_dist = max_distance * coord_scale
+    s_cx, s_cy, s_cz = cx * coord_scale, cy * coord_scale, cz * coord_scale
+    
+    min_x, max_x = s_cx - s_dist, s_cx + s_dist
+    min_y, max_y = s_cy - s_dist, s_cy + s_dist
+    min_z, max_z = s_cz - s_dist, s_cz + s_dist
 
     max_d2 = max_distance * max_distance
-    prefixes = meta.get('prefixes', {}) if meta else {}
-    id_to_prefix = {int(k): v for k, v in prefixes.items()}
-    star_types = meta.get('starTypes', {}) if meta else {}
-    id_to_star = {int(k): v for k, v in star_types.items()}
 
-    cache_key = (center['id64'], int(max_distance), int(bucket_size), int(max_neighbors), bx, by, bz, tuple(sorted(allowed_star_ids)) if allowed_star_ids else None)
+    cache_key = (center['id64'], int(max_distance), coord_scale, int(max_neighbors), tuple(sorted(allowed_star_ids)) if allowed_star_ids else None)
     manual_cache = getattr(neighbors_for_center_prefix, '_manual_cache', None)
     if manual_cache is None:
-        neighbors_for_center_prefix._manual_cache = {}
+        from collections import OrderedDict
+        neighbors_for_center_prefix._manual_cache = OrderedDict()
         manual_cache = neighbors_for_center_prefix._manual_cache
 
     if in_memory_buckets is not None:
-        # gather candidates from preloaded buckets
+        # Fallback for preloaded data (which might still be bucket-based or we might change how preloading works)
+        # For now, let's keep it but it might need update if we want to preload R-tree
+        # Actually, let's just use R-tree for simplicity unless preloading is active.
         out: List[Tuple[float, Dict]] = []
-        for bx_i in range(min_bx, max_bx+1):
-            for by_i in range(min_by, max_by+1):
-                for bz_i in range(min_bz, max_bz+1):
-                    bucket_list = in_memory_buckets.get((bx_i, by_i, bz_i), [])
-                    for r in bucket_list:
-                        sid = r['id64']
-                        star_id = r.get('star_type_id')
-                        if allowed_star_ids and star_id not in allowed_star_ids:
-                            continue
-                        x, y, z = r['x'], r['y'], r['z']
-                        dx = x - center['coords']['x']
-                        dy = y - center['coords']['y']
-                        dz = z - center['coords']['z']
-                        d2 = dx*dx + dy*dy + dz*dz
-                        if d2 <= max_d2:
-                            name = id_to_prefix.get(r.get('prefix_id'), '') + (r.get('name_suffix') or '')
-                            star = id_to_star.get(star_id, '')
-                            out.append((d2, {'id64': sid, 'name': name, 'coords': {'x': x, 'y': y, 'z': z}, 'mainStar': star, 'star_type_id': star_id}))
+        for bucket_list in in_memory_buckets.values():
+            for r in bucket_list:
+                sid = r['id64']
+                star_id = r.get('star_type_id')
+                if allowed_star_ids and star_id not in allowed_star_ids:
+                    continue
+                x, y, z = r['x'] / coord_scale, r['y'] / coord_scale, r['z'] / coord_scale
+                dx = x - cx
+                dy = y - cy
+                dz = z - cz
+                d2 = dx*dx + dy*dy + dz*dz
+                if d2 <= max_d2:
+                    name = id_to_prefix.get(r.get('prefix_id'), '') + (r.get('name_suffix') or '')
+                    star = id_to_star.get(star_id, '')
+                    out.append((d2, {'id64': sid, 'name': name, 'coords': {'x': x, 'y': y, 'z': z}, 'mainStar': star, 'star_type_id': star_id}))
         out.sort(key=lambda t: t[0])
         candidates = [t[1] for t in out[:max_neighbors]]
+        # store in manual cache
+        manual_cache[cache_key] = candidates
     elif cache_key in manual_cache:
         candidates = manual_cache[cache_key]
+        manual_cache.move_to_end(cache_key)
     else:
-        # Lazy load buckets one at a time and cache them globally
+        # R-tree range query
+        sql = '''
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            FROM rtree_systems r
+            JOIN systems s ON s.id64 = r.id64
+            WHERE r.min_x BETWEEN ? AND ?
+              AND r.min_y BETWEEN ? AND ?
+              AND r.min_z BETWEEN ? AND ?
+        '''
+        cur = conn.execute(sql, (min_x, max_x, min_y, max_y, min_z, max_z))
         out: List[Tuple[float, Dict]] = []
-        for bx_i in range(min_bx, max_bx + 1):
-            for by_i in range(min_by, max_by + 1):
-                for bz_i in range(min_bz, max_bz + 1):
-                    key = (bx_i, by_i, bz_i)
-                    bucket_list = global_bucket_cache.get(key)
-                    if bucket_list is None:
-                        # load this bucket from sqlite
-                        cur = conn.execute('SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id FROM systems WHERE bx=? AND by=? AND bz=?', key)
-                        bucket_list = []
-                        for r in cur:
-                            bucket_list.append({'id64': r[0], 'prefix_id': r[1], 'name_suffix': r[2], 'x': r[3], 'y': r[4], 'z': r[5], 'star_type_id': r[6]})
-                        global_bucket_cache[key] = bucket_list
-                    # process bucket_list
-                    for r in bucket_list:
-                        sid = r['id64']
-                        star_id = r.get('star_type_id')
-                        if allowed_star_ids and star_id not in allowed_star_ids:
-                            continue
-                        x, y, z = r['x'], r['y'], r['z']
-                        dx = x - center['coords']['x']
-                        dy = y - center['coords']['y']
-                        dz = z - center['coords']['z']
-                        d2 = dx*dx + dy*dy + dz*dz
-                        if d2 <= max_d2:
-                            name = id_to_prefix.get(r.get('prefix_id'), '') + (r.get('name_suffix') or '')
-                            star = id_to_star.get(star_id, '')
-                            out.append((d2, {'id64': sid, 'name': name, 'coords': {'x': x, 'y': y, 'z': z}, 'mainStar': star, 'star_type_id': star_id}))
+        for r in cur:
+            sid = r[0]
+            star_id = r[6]
+            if allowed_star_ids and star_id not in allowed_star_ids:
+                continue
+            # Unscale coordinates
+            x, y, z = r[3] / coord_scale, r[4] / coord_scale, r[5] / coord_scale
+            dx = x - cx
+            dy = y - cy
+            dz = z - cz
+            d2 = dx*dx + dy*dy + dz*dz
+            if d2 <= max_d2:
+                name = id_to_prefix.get(r[1], '') + (r[2] or '')
+                star = id_to_star.get(star_id, '')
+                out.append((d2, {'id64': sid, 'name': name, 'coords': {'x': x, 'y': y, 'z': z}, 'mainStar': star, 'star_type_id': star_id}))
+        
         out.sort(key=lambda t: t[0])
         candidates = [t[1] for t in out[:max_neighbors]]
-        # store in manual cache to speed repeated identical queries
         manual_cache[cache_key] = candidates
+
+    # Ensure cache doesn't grow too large
+    if len(manual_cache) > 2048:
+        manual_cache.popitem(last=False)
 
     # Filter out visited and self
     res = []
@@ -398,7 +431,7 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
     return res
 
 
-def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, bucket_size: float, meta: Dict, max_nodes: int = 500, max_neighbors: int = 200, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 500, max_neighbors: int = 200, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
     """Greedy approximate walk: quick fallback that moves to the neighbor closest to the target.
 
     This is a lightweight replacement for the old 'fast' branch. It returns a path (including source and target)
@@ -435,33 +468,55 @@ def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
             if nodes_examined >= PROGRESS_INTERVAL:
                 _emit('\n')
             return path
-        neighbors = neighbors_for_center_prefix(conn, cur, max_hop, visited, bucket_size, max_neighbors=max_neighbors, meta=meta, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
+        
+        # compute step point max_hop away from cur towards target to find neighbors closest to max_hop
+        vx = target['coords']['x'] - cur['coords']['x']
+        vy = target['coords']['y'] - cur['coords']['y']
+        vz = target['coords']['z'] - cur['coords']['z']
+        mag = math.sqrt(vx*vx + vy*vy + vz*vz)
+        if mag == 0: break
+        tx = cur['coords']['x'] + (vx / mag) * max_hop
+        ty = cur['coords']['y'] + (vy / mag) * max_hop
+        tz = cur['coords']['z'] + (vz / mag) * max_hop
+        
+        fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
+        # Search around step point to find candidates near the max_hop limit
+        neighbors = neighbors_for_center_prefix(conn, fake_center, max_hop, visited, coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
+        
         if not neighbors:
             break
-        # pick neighbor minimizing distance to target
+            
+        # pick neighbor closest to the step point (i.e. closest to max_hop jump towards target)
         best = None
-        best_d2 = None
-        cur_dx = cur['coords']['x'] - target['coords']['x']
-        cur_d2 = cur_dx*cur_dx + (cur['coords']['y'] - target['coords']['y'])**2 + (cur['coords']['z'] - target['coords']['z'])**2
+        best_step_d2 = None
+        cur_d2 = (cur['coords']['x'] - target['coords']['x'])**2 + (cur['coords']['y'] - target['coords']['y'])**2 + (cur['coords']['z'] - target['coords']['z'])**2
+        
         for n in neighbors:
             if n['id64'] in visited:
                 continue
-            dx = n['coords']['x'] - target['coords']['x']
-            dy = n['coords']['y'] - target['coords']['y']
-            dz = n['coords']['z'] - target['coords']['z']
-            d2 = dx*dx + dy*dy + dz*dz
-            if best is None or d2 < best_d2:
+            # Must be within max_hop of current
+            dn_cur_d2 = (n['coords']['x']-cur['coords']['x'])**2 + (n['coords']['y']-cur['coords']['y'])**2 + (n['coords']['z']-cur['coords']['z'])**2
+            if dn_cur_d2 > max_hop**2:
+                continue
+            
+            # distance to step point
+            sd2 = (n['coords']['x']-tx)**2 + (n['coords']['y']-ty)**2 + (n['coords']['z']-tz)**2
+            if best is None or sd2 < best_step_d2:
                 best = n
-                best_d2 = d2
+                best_step_d2 = sd2
+        
         if best is None:
             break
-        # if no progress (best not closer than current), allow a few stalls then give up
+            
+        # check if we are making progress towards target
+        best_d2 = (best['coords']['x'] - target['coords']['x'])**2 + (best['coords']['y'] - target['coords']['y'])**2 + (best['coords']['z'] - target['coords']['z'])**2
         if best_d2 >= cur_d2:
             stalls += 1
             if stalls > 5:
                 break
         else:
             stalls = 0
+            
         visited.add(best['id64'])
         path.append(best)
         cur = best
@@ -470,7 +525,7 @@ def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
     return None
 
 
-def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, bucket_size: float, meta: Dict, max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.05, fallback_to_greedy: bool = True, greedy_nodes: int = 500, greedy_neighbors: int = 200, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.05, fallback_to_greedy: bool = True, greedy_nodes: int = 500, greedy_neighbors: int = 200, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
     """Directional stepping pathfinder (approximate, fast).
 
     From current system, compute a point max_hop towards target and search for a system near that point within an expanding radius starting at step_threshold.
@@ -532,61 +587,51 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
         ty = cur['coords']['y'] + (vy / mag) * max_hop
         tz = cur['coords']['z'] + (vz / mag) * max_hop
 
-        # search for candidate near (tx,ty,tz) with expanding radius
+        # expanding radius search around step point
         radius = step_threshold
         found = None
         while radius <= max_hop:
-            # progress on radius
-            if nodes % PROGRESS_INTERVAL == 0:
-                try:
-                    _emit(f"  trying radius={radius:.3f}")
-                except Exception:
-                    pass
             fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
-            cands = neighbors_for_center_prefix(conn, fake_center, radius, set(), bucket_size, max_neighbors=max_neighbors, meta=meta, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
+            cands = neighbors_for_center_prefix(conn, fake_center, radius, set(), coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
+            
             if cands:
-                # sort by closeness to the step point
-                cands_sorted = sorted(cands, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
-                for cand in cands_sorted:
-                    if cand['id64'] in visited:
+                # filter for those within max_hop of current and not visited
+                valid_cands = []
+                for c in cands:
+                    if c['id64'] in visited:
                         continue
-                    # enforce hop distance <= max_hop from current
-                    dx_c = cand['coords']['x'] - cur['coords']['x']
-                    dy_c = cand['coords']['y'] - cur['coords']['y']
-                    dz_c = cand['coords']['z'] - cur['coords']['z']
-                    d2_c = dx_c*dx_c + dy_c*dy_c + dz_c*dz_c
-                    if d2_c <= max_hop*max_hop:
-                        found = cand
-                        break
-                if found:
+                    dx_c = c['coords']['x'] - cur['coords']['x']
+                    dy_c = c['coords']['y'] - cur['coords']['y']
+                    dz_c = c['coords']['z'] - cur['coords']['z']
+                    if dx_c*dx_c + dy_c*dy_c + dz_c*dz_c <= max_hop*max_hop:
+                        valid_cands.append(c)
+                
+                if valid_cands:
+                    # pick candidate closest to the step point (i.e. closest to max_hop jump)
+                    found = min(valid_cands, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
                     break
+            
             radius *= expand_factor
 
         if not found:
-            # try a slightly relaxed hop distance before giving up
+            # try a relaxed search if still nothing found
             relaxed_max = max_hop * relax_factor
-            radius = step_threshold
+            radius = max_hop
             while radius <= relaxed_max:
-                if nodes % PROGRESS_INTERVAL == 0:
-                    try:
-                        _emit(f"  trying relaxed radius={radius:.3f} (relaxed max {relaxed_max:.3f})")
-                    except Exception:
-                        pass
                 fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
-                cands = neighbors_for_center_prefix(conn, fake_center, radius, set(), bucket_size, max_neighbors=max_neighbors, meta=meta, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
+                cands = neighbors_for_center_prefix(conn, fake_center, radius, set(), coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
                 if cands:
-                    cands_sorted = sorted(cands, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
-                    for cand in cands_sorted:
-                        if cand['id64'] in visited:
+                    valid_cands = []
+                    for c in cands:
+                        if c['id64'] in visited:
                             continue
-                        dx_c = cand['coords']['x'] - cur['coords']['x']
-                        dy_c = cand['coords']['y'] - cur['coords']['y']
-                        dz_c = cand['coords']['z'] - cur['coords']['z']
-                        d2_c = dx_c*dx_c + dy_c*dy_c + dz_c*dz_c
-                        if d2_c <= relaxed_max*relaxed_max:
-                            found = cand
-                            break
-                    if found:
+                        dx_c = c['coords']['x'] - cur['coords']['x']
+                        dy_c = c['coords']['y'] - cur['coords']['y']
+                        dz_c = c['coords']['z'] - cur['coords']['z']
+                        if dx_c*dx_c + dy_c*dy_c + dz_c*dz_c <= relaxed_max*relaxed_max:
+                            valid_cands.append(c)
+                    if valid_cands:
+                        found = min(valid_cands, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
                         break
                 radius *= expand_factor
 
@@ -599,7 +644,7 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
                     _emit('Directional: falling back to short greedy search...')
                 except Exception:
                     pass
-                greedy_path = find_path_greedy(conn, cur, target, max_hop, bucket_size, meta, max_nodes=greedy_nodes, max_neighbors=greedy_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets, on_progress=_emit)
+                greedy_path = find_path_greedy(conn, cur, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes=greedy_nodes, max_neighbors=greedy_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets, on_progress=_emit)
                 if greedy_path:
                     # attach greedy path (skip duplicate current)
                     path.extend(greedy_path[1:])
@@ -617,6 +662,52 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
     if nodes >= PROGRESS_INTERVAL:
         _emit('\n')
     return None
+
+
+def nearest_of_type(conn: sqlite3.Connection, near_coords: Dict, type_ids: List[int], coord_scale: int, initial_radius: float = 50.0) -> Optional[Dict]:
+    """Find the nearest system of matching star type using expanding radius R-tree search."""
+    radius = initial_radius
+    cx, cy, cz = near_coords['x'], near_coords['y'], near_coords['z']
+    
+    while True:
+        # Scale search bounds
+        s_dist = radius * coord_scale
+        s_cx, s_cy, s_cz = cx * coord_scale, cy * coord_scale, cz * coord_scale
+        
+        min_x, max_x = s_cx - s_dist, s_cx + s_dist
+        min_y, max_y = s_cy - s_dist, s_cy + s_dist
+        min_z, max_z = s_cz - s_dist, s_cz + s_dist
+        
+        placeholders = ','.join('?' for _ in type_ids)
+        sql = f'''
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            FROM rtree_systems r
+            JOIN systems s ON s.id64 = r.id64
+            WHERE r.min_x BETWEEN ? AND ?
+              AND r.min_y BETWEEN ? AND ?
+              AND r.min_z BETWEEN ? AND ?
+              AND s.star_type_id IN ({placeholders})
+        '''
+        rows = conn.execute(sql, (min_x, max_x, min_y, max_y, min_z, max_z, *type_ids)).fetchall()
+        
+        best = None
+        best_d2 = None
+        
+        for r in rows:
+            # Unscale
+            rx, ry, rz = r[3] / coord_scale, r[4] / coord_scale, r[5] / coord_scale
+            d2 = (rx-cx)**2 + (ry-cy)**2 + (rz-cz)**2
+            if d2 <= radius**2:
+                if best is None or d2 < best_d2:
+                    best = r
+                    best_d2 = d2
+        
+        if best:
+            return {'id64': best[0], 'prefix_id': best[1], 'name_suffix': best[2], 'x': best[3], 'y': best[4], 'z': best[5], 'star_type_id': best[6], 'dist': math.sqrt(best_d2)}
+        
+        if radius > 100000: # Galaxy diameter fallback
+            return None
+        radius *= 2
 
 
 def choose_candidate_list(lst: List[Dict], which: str) -> Optional[Dict]:
@@ -650,6 +741,7 @@ def main():
     parser.add_argument('--db', default=DEFAULT_DB)
     parser.add_argument('--meta-file', default=DEFAULT_META)
     parser.add_argument('--bucket-size', type=float, default=50.0)
+    parser.add_argument('--coord-scale', type=int, default=32, help='Scale factor for storing coordinates as integers (default 32)')
     parser.add_argument('--build-meta', action='store_true')
     parser.add_argument('--build-index', action='store_true')
     parser.add_argument('--force', action='store_true', help='Force rebuild index from scratch')
@@ -664,6 +756,8 @@ def main():
     parser.add_argument('--step-expand-factor', type=float, default=2.0, help='Multiplier to expand search radius when no candidate found')
     parser.add_argument('--preload', action='store_true', help='Preload buckets between source and target into memory to avoid SQL roundtrips')
     parser.add_argument('--preload-margin-buckets', type=int, default=1, help='Extra bucket margin when preloading')
+    parser.add_argument('--from', dest='from_sys', help='Source system name or id64')
+    parser.add_argument('--to', dest='to_sys', help='Target system name or id64')
     args = parser.parse_args()
     # Default behavior: if user didn't request --fast or --directional explicitly, use directional stepping by default for speed
     if not getattr(args, 'fast', False) and not getattr(args, 'directional', False):
@@ -676,7 +770,7 @@ def main():
         return
 
     if args.build_index:
-        build_index_prefix(args.file, args.db, args.bucket_size, args.meta_file, force=args.force)
+        build_index_prefix(args.file, args.db, args.bucket_size, args.meta_file, coord_scale=args.coord_scale, force=args.force)
         return
 
     if not os.path.exists(args.db):
@@ -689,10 +783,25 @@ def main():
     with open(args.meta_file, 'r', encoding='utf-8') as mf:
         meta = json.load(mf)
 
+    # Pre-build lookup maps to avoid rebuilding in hot loops
+    prefixes = meta.get('prefixes', {})
+    id_to_prefix = {int(k): v for k, v in prefixes.items()}
+    star_map = meta.get('starTypes', {})
+    id_to_star = {int(k): v for k, v in star_map.items()} if star_map else {}
+
     # build star name -> id map
-    star_name_to_id = {v: int(k) for k, v in meta.get('starTypes', {}).items()}
+    star_name_to_id = {v: int(k) for k, v in star_map.items()}
 
     conn = open_db(args.db)
+    
+    # Load DB parameters
+    try:
+        coord_scale = int(conn.execute('SELECT value FROM db_meta WHERE key="coord_scale"').fetchone()[0])
+        bucket_size = float(conn.execute('SELECT value FROM db_meta WHERE key="bucket_size"').fetchone()[0])
+    except Exception:
+        # Fallback for old DBs if they haven't been rebuilt yet
+        coord_scale = 1
+        bucket_size = args.bucket_size
 
     # If nearest-type requested, perform nearest search and exit
     if args.nearest_type:
@@ -721,38 +830,32 @@ def main():
                 return
         else:
             # treat as system query
-            cand = get_system_by_query_prefix(conn, near, meta)
+            cand = get_system_by_query_prefix(conn, near, meta, id_to_prefix, id_to_star, coord_scale)
             if not cand:
                 print('Could not resolve --near to a system:', near)
                 return
             near_coords = cand[0]['coords']
-        # perform SQL nearest search among matching star_type_ids
-        placeholders = ','.join('?' for _ in type_ids)
-        sql = "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,((x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?)) as d2 FROM systems WHERE star_type_id IN (" + placeholders + ") ORDER BY d2 LIMIT 1"
-        params = [near_coords['x'], near_coords['x'], near_coords['y'], near_coords['y'], near_coords['z'], near_coords['z']] + type_ids
-        cur = conn.execute(sql, tuple(params))
-        row = cur.fetchone()
-        if not row:
+        
+        # Use expanding R-tree search
+        result = nearest_of_type(conn, near_coords, type_ids, coord_scale)
+        if not result:
             print('No matching systems found')
             return
-        name = meta.get('prefixes', {}).get(str(row[1]), '') + (row[2] or '')
-        dx = row[3] - near_coords['x']
-        dy = row[4] - near_coords['y']
-        dz = row[5] - near_coords['z']
-        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-        print(f"Nearest: {name} id64={row[0]} dist={dist:.1f}")
+        
+        name = id_to_prefix.get(result['prefix_id'], '') + (result['name_suffix'] or '')
+        print(f"Nearest: {name} id64={result['id64']} dist={result['dist']:.1f}")
         return
 
     # interactive prompts for pathfinding
-    q1 = input('Enter first system name or id64: ').strip()
-    cand1 = get_system_by_query_prefix(conn, q1, meta)
+    q1 = args.from_sys or input('Enter first system name or id64: ').strip()
+    cand1 = get_system_by_query_prefix(conn, q1, meta, id_to_prefix, id_to_star, coord_scale)
     s1 = choose_candidate_list(cand1, 'first')
     if s1 is None:
         print('Cancelled')
         return
 
-    q2 = input('Enter second system name or id64: ').strip()
-    cand2 = get_system_by_query_prefix(conn, q2, meta)
+    q2 = args.to_sys or input('Enter second system name or id64: ').strip()
+    cand2 = get_system_by_query_prefix(conn, q2, meta, id_to_prefix, id_to_star, coord_scale)
     s2 = choose_candidate_list(cand2, 'second')
     if s2 is None:
         print('Cancelled')
@@ -788,7 +891,7 @@ def main():
     if args.preload:
         # compute bucket bounding box between source and target
         def bucket_coords_of(c):
-            return (math.floor(c['x'] / args.bucket_size), math.floor(c['y'] / args.bucket_size), math.floor(c['z'] / args.bucket_size))
+            return (math.floor(c['x'] / bucket_size), math.floor(c['y'] / bucket_size), math.floor(c['z'] / bucket_size))
         b1 = bucket_coords_of(s1['coords'])
         b2 = bucket_coords_of(s2['coords'])
         min_bx = min(b1[0], b2[0]) - args.preload_margin_buckets
@@ -799,14 +902,25 @@ def main():
         max_bz = max(b1[2], b2[2]) + args.preload_margin_buckets
         print(f"Preloading buckets bx[{min_bx}..{max_bx}] by[{min_by}..{max_by}] bz[{min_bz}..{max_bz}]")
         in_memory_buckets = {}
-        prefixes = meta.get('prefixes', {})
-        id_to_prefix = {int(k): v for k, v in prefixes.items()}
-        star_types = meta.get('starTypes', {})
-        id_to_star = {int(k): v for k, v in star_types.items()}
-        sql = 'SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,bx,by,bz FROM systems WHERE bx BETWEEN ? AND ? AND by BETWEEN ? AND ? AND bz BETWEEN ? AND ?'
-        cur = conn.execute(sql, (min_bx, max_bx, min_by, max_by, min_bz, max_bz))
+        # Preload currently still uses buckets for the "in-memory" structure, but reads from systems table
+        # We need to unscale coords if we store them in in_memory_buckets, or handle it in neighbors_for_center_prefix
+        # Let's keep the scaled values in the bucket list and have neighbors_for_center_prefix unscale them.
+        sql = '''
+            SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id 
+            FROM systems 
+            WHERE (x/?) BETWEEN ? AND ? 
+              AND (y/?) BETWEEN ? AND ? 
+              AND (z/?) BETWEEN ? AND ?
+        '''
+        # (x/scale) / bucket_size = x / (scale * bucket_size)
+        s_bs = coord_scale * bucket_size
+        cur = conn.execute(sql, (s_bs, min_bx, max_bx, s_bs, min_by, max_by, s_bs, min_bz, max_bz))
         for r in cur:
-            bx_i, by_i, bz_i = r[7], r[8], r[9]
+            # To maintain compatibility with the existing in_memory_buckets structure in neighbors_for_center_prefix
+            # we'll use the scaled coordinates and the bucket coords as keys.
+            bx_i = math.floor(r[3] / s_bs)
+            by_i = math.floor(r[4] / s_bs)
+            bz_i = math.floor(r[5] / s_bs)
             rec = {'id64': r[0], 'prefix_id': r[1], 'name_suffix': r[2], 'x': r[3], 'y': r[4], 'z': r[5], 'star_type_id': r[6]}
             in_memory_buckets.setdefault((bx_i, by_i, bz_i), []).append(rec)
 
@@ -818,7 +932,7 @@ def main():
         else:
             print(msg, end='\r', flush=True)
 
-    path = find_path_directional(conn, s1, s2, args.max_hop, args.bucket_size, meta, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets, on_progress=cli_progress)
+    path = find_path_directional(conn, s1, s2, args.max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets, on_progress=cli_progress)
     if path is None:
         print('No path found')
         return
