@@ -412,11 +412,11 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
     return res
 
 
-def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
-    """Directional stepping pathfinder with bidirectional search and per-step relaxation.
+def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, backtrack_steps: int = 2, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+    """Directional stepping pathfinder with bidirectional search, backtracking, and relaxation.
 
     Tries to connect source and target by taking steps from both ends.
-    If stuck, relaxes the max_hop constraint for the current step only.
+    If stuck, backtracks N steps to find perpendicular alternatives before relaxing.
     """
     def _emit(msg: str):
         if on_progress: on_progress(msg)
@@ -424,17 +424,41 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
             if msg == '\n': print()
             else: print(msg, end='\r', flush=True)
 
+    def _get_perp_neighbor(current: Dict, goal: Dict, visited: Set[int]) -> Optional[Dict]:
+        """Find a neighbor within max_hop that is most perpendicular to the target vector."""
+        cx, cy, cz = current['coords']['x'], current['coords']['y'], current['coords']['z']
+        gx, gy, gz = goal['coords']['x'], goal['coords']['y'], goal['coords']['z']
+        vx, vy, vz = gx - cx, gy - cy, gz - cz
+        v_mag = math.sqrt(vx*vx + vy*vy + vz*vz)
+        if v_mag == 0: return None
+        
+        # Search all neighbors within max_hop
+        cands = neighbors_for_center_prefix(conn, current, max_hop, visited, coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
+        if not cands: return None
+        
+        best = None
+        max_perp_d2 = -1.0
+        for c in cands:
+            wx, wy, wz = c['coords']['x'] - cx, c['coords']['y'] - cy, c['coords']['z'] - cz
+            # Project W onto V
+            dot = wx*vx + wy*vy + wz*vz
+            proj_len = dot / v_mag
+            # Perpendicular vector component squared: |W|^2 - (proj_len)^2
+            perp_d2 = (wx*wx + wy*wy + wz*wz) - (proj_len*proj_len)
+            if perp_d2 > max_perp_d2:
+                max_perp_d2 = perp_d2
+                best = c
+        return best
+
     def _step(current: Dict, goal: Dict, current_max_hop: float, visited_self: Set[int], visited_other: Dict[int, Dict]) -> Optional[Dict]:
         cx, cy, cz = current['coords']['x'], current['coords']['y'], current['coords']['z']
         gx, gy, gz = goal['coords']['x'], goal['coords']['y'], goal['coords']['z']
         dx, dy, dz = gx - cx, gy - cy, gz - cz
         d2 = dx*dx + dy*dy + dz*dz
         
-        # If goal is within reach, return it
         if d2 <= current_max_hop*current_max_hop:
             res = goal.copy()
-            if d2 > max_hop*max_hop:
-                res['_relaxed_hop'] = math.sqrt(d2)
+            if d2 > max_hop*max_hop: res['_relaxed_hop'] = math.sqrt(d2)
             return res
 
         mag = math.sqrt(d2)
@@ -448,32 +472,25 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
                 valid = []
                 for c in cands:
                     if c['id64'] in visited_self: continue
-                    # Must be within current_max_hop of current
                     dcx, dcy, dcz = c['coords']['x'] - cx, c['coords']['y'] - cy, c['coords']['z'] - cz
                     dist2 = dcx*dcx + dcy*dcy + dcz*dcz
                     if dist2 <= current_max_hop*current_max_hop:
-                        # Check if it connects to the other side
                         if c['id64'] in visited_other:
                             res = visited_other[c['id64']].copy()
-                            if dist2 > max_hop*max_hop:
-                                res['_relaxed_hop'] = math.sqrt(dist2)
+                            if dist2 > max_hop*max_hop: res['_relaxed_hop'] = math.sqrt(dist2)
                             return res
                         valid.append((dist2, c))
                 if valid:
                     dist2, best_c = min(valid, key=lambda t: (t[1]['coords']['x']-tx)**2 + (t[1]['coords']['y']-ty)**2 + (t[1]['coords']['z']-tz)**2)
                     best = best_c.copy()
-                    if dist2 > max_hop*max_hop:
-                        best['_relaxed_hop'] = math.sqrt(dist2)
+                    if dist2 > max_hop*max_hop: best['_relaxed_hop'] = math.sqrt(dist2)
                     return best
             radius *= expand_factor
         return None
 
-    path_f = [source]
-    path_r = [target]
-    visited_f = {source['id64']: source}
-    visited_r = {target['id64']: target}
-    curr_f = source
-    curr_r = target
+    path_f, path_r = [source], [target]
+    visited_f, visited_r = {source['id64']: source}, {target['id64']: target}
+    curr_f, curr_r = source, target
 
     _emit("Pathfinding: Starting bidirectional search...")
     for nodes in range(max_nodes):
@@ -482,102 +499,61 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
             gap = math.sqrt(dx*dx + dy*dy + dz*dz)
             _emit(f"Search step {nodes}: gap={gap:.1f} nodes={len(path_f)+len(path_r)}")
 
-        # 1. Forward step
+        # Try forward and reverse steps
         nxt_f = _step(curr_f, curr_r, max_hop, set(visited_f.keys()), visited_r)
         if nxt_f:
             if nxt_f['id64'] in visited_r:
-                # Connected!
-                idx = -1
-                for i, node in enumerate(path_r):
-                    if node['id64'] == nxt_f['id64']:
-                        idx = i
-                        break
-                # Update the connection hop distance/relaxation if needed
-                # The connection hop is curr_f -> nxt_f
-                # nxt_f in path_f will represent this jump
-                path_f.append(nxt_f)
-                res_path = path_f + path_r[:idx][::-1]
-                _emit('\n')
-                return res_path
-            path_f.append(nxt_f)
-            visited_f[nxt_f['id64']] = nxt_f
-            curr_f = nxt_f
-            continue
+                idx = next(i for i, n in enumerate(path_r) if n['id64'] == nxt_f['id64'])
+                path_f.append(nxt_f); _emit('\n'); return path_f + path_r[:idx][::-1]
+            path_f.append(nxt_f); visited_f[nxt_f['id64']] = nxt_f; curr_f = nxt_f; continue
 
-        # 2. Reverse step
         nxt_r = _step(curr_r, curr_f, max_hop, set(visited_r.keys()), visited_f)
         if nxt_r:
             if nxt_r['id64'] in visited_f:
-                # Connected!
-                idx = -1
-                for i, node in enumerate(path_f):
-                    if node['id64'] == nxt_r['id64']:
-                        idx = i
-                        break
-                # Connection hop is curr_r -> nxt_r (which is node in path_f)
-                # We'll attach the path_r (reversed) to path_f
-                # But wait, we need to handle the relaxed flag for the connection hop.
-                # If nxt_r was relaxed, it's already marked in nxt_r.
-                path_r.append(nxt_r)
-                res_path = path_f[:idx+1] + path_r[::-1][1:]
-                _emit('\n')
-                return res_path
-            path_r.append(nxt_r)
-            visited_r[nxt_r['id64']] = nxt_r
-            curr_r = nxt_r
-            continue
+                idx = next(i for i, n in enumerate(path_f) if n['id64'] == nxt_r['id64'])
+                path_r.append(nxt_r); _emit('\n'); return path_f[:idx+1] + path_r[::-1][1:]
+            path_r.append(nxt_r); visited_r[nxt_r['id64']] = nxt_r; curr_r = nxt_r; continue
 
-        # 3. Both stuck, try relaxation for this step
+        # Both stuck, try backtracking for alternative "perpendicular" paths
+        found_alt = False
+        for i in range(1, backtrack_steps + 1):
+            if len(path_f) > i:
+                _emit(f"Pathfinding: Forward stuck, backtracking {i} steps...")
+                alt_base = path_f[-(i+1)]
+                alt = _get_perp_neighbor(alt_base, curr_r, set(visited_f.keys()))
+                if alt:
+                    path_f = path_f[:-i] + [alt]
+                    visited_f[alt['id64']] = alt; curr_f = alt; found_alt = True; break
+            if len(path_r) > i:
+                _emit(f"Pathfinding: Reverse stuck, backtracking {i} steps...")
+                alt_base = path_r[-(i+1)]
+                alt = _get_perp_neighbor(alt_base, curr_f, set(visited_r.keys()))
+                if alt:
+                    path_r = path_r[:-i] + [alt]
+                    visited_r[alt['id64']] = alt; curr_r = alt; found_alt = True; break
+        if found_alt: continue
+
+        # Backtracking failed, resort to relaxation
         _emit("Pathfinding: Stuck, trying relaxation...")
         found_relaxed = False
         current_relax = relax_factor
         while current_relax <= 3.0:
             relaxed_hop = max_hop * current_relax
-            # Try forward relaxed
             nxt_f = _step(curr_f, curr_r, relaxed_hop, set(visited_f.keys()), visited_r)
             if nxt_f:
                 if nxt_f['id64'] in visited_r:
-                    idx = -1
-                    for i, node in enumerate(path_r):
-                        if node['id64'] == nxt_f['id64']:
-                            idx = i
-                            break
-                    path_f.append(nxt_f)
-                    res_path = path_f + path_r[:idx][::-1]
-                    _emit('\n')
-                    return res_path
-                path_f.append(nxt_f)
-                visited_f[nxt_f['id64']] = nxt_f
-                curr_f = nxt_f
-                found_relaxed = True
-                break
-            
-            # Try reverse relaxed
+                    idx = next(i for i, n in enumerate(path_r) if n['id64'] == nxt_f['id64'])
+                    path_f.append(nxt_f); _emit('\n'); return path_f + path_r[:idx][::-1]
+                path_f.append(nxt_f); visited_f[nxt_f['id64']] = nxt_f; curr_f = nxt_f; found_relaxed = True; break
             nxt_r = _step(curr_r, curr_f, relaxed_hop, set(visited_r.keys()), visited_f)
             if nxt_r:
                 if nxt_r['id64'] in visited_f:
-                    idx = -1
-                    for i, node in enumerate(path_f):
-                        if node['id64'] == nxt_r['id64']:
-                            idx = i
-                            break
-                    path_r.append(nxt_r)
-                    res_path = path_f[:idx+1] + path_r[::-1][1:]
-                    _emit('\n')
-                    return res_path
-                path_r.append(nxt_r)
-                visited_r[nxt_r['id64']] = nxt_r
-                curr_r = nxt_r
-                found_relaxed = True
-                break
+                    idx = next(i for i, n in enumerate(path_f) if n['id64'] == nxt_r['id64'])
+                    path_r.append(nxt_r); _emit('\n'); return path_f[:idx+1] + path_r[::-1][1:]
+                path_r.append(nxt_r); visited_r[nxt_r['id64']] = nxt_r; curr_r = nxt_r; found_relaxed = True; break
             current_relax *= relax_factor
-        
-        if not found_relaxed:
-            _emit('\n')
-            return None
-
-    _emit('\n')
-    return None
+        if not found_relaxed: _emit('\n'); return None
+    _emit('\n'); return None
 
 
 def nearest_of_type(conn: sqlite3.Connection, near_coords: Dict, type_ids: List[int], coord_scale: int, initial_radius: float = 50.0) -> Optional[Dict]:
@@ -670,6 +646,7 @@ def main():
     parser.add_argument('--directional', action='store_true', help='Use directional stepping approximate pathfinder')
     parser.add_argument('--step-threshold', type=float, default=1.0, help='Initial threshold distance when searching near the step point')
     parser.add_argument('--step-expand-factor', type=float, default=2.0, help='Multiplier to expand search radius when no candidate found')
+    parser.add_argument('--backtrack-steps', type=int, default=2, help='Maximum steps to backtrack when stuck to find alternative paths')
     parser.add_argument('--preload', action='store_true', help='Preload buckets between source and target into memory to avoid SQL roundtrips')
     parser.add_argument('--preload-margin-buckets', type=int, default=1, help='Extra bucket margin when preloading')
     parser.add_argument('--from', dest='from_sys', help='Source system name or id64')
@@ -848,7 +825,7 @@ def main():
         else:
             print(msg, end='\r', flush=True)
 
-    path = find_path_directional(conn, s1, s2, args.max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets, on_progress=cli_progress)
+    path = find_path_directional(conn, s1, s2, args.max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets, backtrack_steps=args.backtrack_steps, on_progress=cli_progress)
     if path is None:
         print('No path found')
         return
