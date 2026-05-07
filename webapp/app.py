@@ -60,6 +60,59 @@ def api_search():
         conn.close()
     return jsonify(results)
 
+@app.route('/api/nearest')
+def api_nearest():
+    near_q = request.args.get('near', '').strip()
+    types_q = request.args.get('types', '').strip()
+    if not near_q or not types_q:
+        return jsonify({'error': 'near and types required'}), 400
+    
+    db = DB_PATH
+    conn = distance.open_db(db)
+    try:
+        coord_scale, _ = get_db_params(conn)
+        # 1. Resolve near point
+        near_coords = None
+        if ',' in near_q:
+            parts = near_q.split(',')
+            if len(parts) == 3:
+                try:
+                    near_coords = {'x': float(parts[0]), 'y': float(parts[1]), 'z': float(parts[2])}
+                except ValueError: pass
+        
+        if not near_coords:
+            cands = distance.get_system_by_query_prefix(conn, near_q, META, ID_TO_PREFIX, ID_TO_STAR, coord_scale, limit=1)
+            if cands:
+                near_coords = cands[0]['coords']
+        
+        if not near_coords:
+            return jsonify({'error': f'could not resolve reference point: {near_q}'}), 404
+        
+        # 2. Resolve star type ids
+        star_name_to_id = {v: k for k, v in ID_TO_STAR.items()}
+        type_parts = [t.strip() for t in types_q.split(',') if t.strip()]
+        type_ids = [star_name_to_id.get(t) for t in type_parts if t in star_name_to_id]
+        if not type_ids:
+            return jsonify({'error': f'no matching star types found for: {types_q}'}), 400
+        
+        # 3. Search
+        res = distance.nearest_of_type(conn, near_coords, type_ids, coord_scale)
+        if not res:
+            return jsonify({'error': 'no matching systems found'}), 404
+        
+        # 4. Format
+        name = ID_TO_PREFIX.get(res['prefix_id'], '') + (res['name_suffix'] or '')
+        return jsonify({
+            'id64': res['id64'],
+            'name': name,
+            'coords': {'x': res['x']/coord_scale, 'y': res['y']/coord_scale, 'z': res['z']/coord_scale},
+            'dist': round(res['dist'], 1),
+            'mainStar': ID_TO_STAR.get(res['star_type_id'], '')
+        })
+    finally:
+        conn.close()
+
+
 @app.route('/api/path', methods=['POST'])
 def api_path():
     body = request.get_json() or {}

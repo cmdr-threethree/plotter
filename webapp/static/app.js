@@ -52,6 +52,17 @@ $('target').addEventListener('input', (e)=>{
   }, 200);
 });
 
+let nearTimer = null;
+$('near').addEventListener('input', (e)=>{
+  clearTimeout(nearTimer);
+  const v = e.target.value;
+  if (v.includes(',')) return; // Don't suggest for coordinates
+  nearTimer = setTimeout(async ()=>{
+    const items = await search(v);
+    renderSuggestions($('near-suggestions'), items);
+  }, 200);
+});
+
 $('reverse').addEventListener('click', ()=>{
   const s = $('source').value;
   $('source').value = $('target').value;
@@ -176,4 +187,47 @@ $('find').addEventListener('click', async ()=>{
     $('info').textContent = 'Stream error or connection closed';
     if(es){ es.close(); es = null; }
   };
+});
+
+$('find-nearest').addEventListener('click', async ()=>{
+  const near = $('near').value.trim();
+  const types = $('near-types').value.trim();
+  if(!near || !types){
+    $('info').textContent = 'Enter reference point and star types';
+    return;
+  }
+  $('info').textContent = 'Searching...';
+  $('path-list').innerHTML = '';
+  
+  try {
+    const params = new URLSearchParams({near, types});
+    const res = await fetch(`/api/nearest?${params.toString()}`);
+    const data = await res.json();
+    console.log('Nearest Result:', data);
+    if(data.error){
+      $('info').textContent = data.error;
+    }else{
+      $('info').textContent = `Found: ${data.name} | Distance: ${data.dist.toFixed(1)}ly | Star: ${data.mainStar}`;
+      const li = document.createElement('li');
+      li.style.cursor = 'pointer';
+      li.title = 'Click to copy system name';
+      const strong = document.createElement('strong');
+      strong.textContent = data.name;
+      li.appendChild(strong);
+      const meta = document.createTextNode(` id=${data.id64} coords=(${data.coords.x.toFixed(1)}, ${data.coords.y.toFixed(1)}, ${data.coords.z.toFixed(1)}) star=${data.mainStar}`);
+      li.appendChild(meta);
+      
+      li.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(data.name);
+          $('info').textContent = `Copied: ${data.name}`;
+        } catch(e) {}
+      });
+      
+      $('path-list').appendChild(li);
+    }
+  } catch(e) {
+    console.error(e);
+    $('info').textContent = 'Error during search';
+  }
 });

@@ -32,6 +32,23 @@
           <button id="find">Find path</button>
         </div>
       </div>
+
+      <div class="controls" style="margin-top: 2em;">
+        <h3>Find Nearest System</h3>
+        <div class="row">
+          <label>Near</label>
+          <input id="near" placeholder="system name, id64, or x,y,z" />
+          <div id="near-suggestions" class="suggestions"></div>
+        </div>
+        <div class="row">
+          <label>Star types</label>
+          <input id="near-types" placeholder="e.g. Neutron Star, White Dwarf" />
+        </div>
+        <div class="row">
+          <button id="find-nearest">Find nearest</button>
+        </div>
+      </div>
+
       <section id="results">
         <h2>Results</h2>
         <div id="info"></div>
