@@ -52,12 +52,17 @@ $('target').addEventListener('input', (e)=>{
   }, 200);
 });
 
+$('reverse').addEventListener('click', ()=>{
+  const s = $('source').value;
+  $('source').value = $('target').value;
+  $('target').value = s;
+});
+
 let es = null;
 $('find').addEventListener('click', async ()=>{
   const source = $('source').value.trim();
   const target = $('target').value.trim();
-  const max_hop = parseFloat($('max-hop').value) || 40;
-  const bucket_size = parseFloat($('bucket-size').value) || 50;
+  const max_hop = parseFloat($('max-hop').value) || 400;
   // basic validation
   if(!source || !target){
     $('info').textContent = 'Enter both source and target';
@@ -85,7 +90,7 @@ $('find').addEventListener('click', async ()=>{
     es.close();
     es = null;
   }
-  const params = new URLSearchParams({source, target, max_hop, bucket_size});
+  const params = new URLSearchParams({source, target, max_hop});
   es = new EventSource(`/api/path/stream?${params.toString()}`);
   es.addEventListener('progress', (ev)=>{
     try{

@@ -16,6 +16,9 @@
           <input id="source" placeholder="system name or id64" />
           <div id="src-suggestions" class="suggestions"></div>
         </div>
+        <div class="row" style="text-align: center;">
+          <button id="reverse" title="Swap source and target">⇅ Reverse</button>
+        </div>
         <div class="row">
           <label>Target</label>
           <input id="target" placeholder="system name or id64" />
@@ -23,9 +26,7 @@
         </div>
         <div class="row small">
           <label>Max hop</label>
-          <input id="max-hop" type="number" value="40" />
-          <label>Bucket size</label>
-          <input id="bucket-size" type="number" value="50" />
+          <input id="max-hop" type="number" value="400" />
         </div>
         <div class="row">
           <button id="find">Find path</button>
