@@ -412,101 +412,7 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
     return res
 
 
-def find_path_greedy(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 500, max_neighbors: int = 200, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
-    """Greedy approximate walk: quick fallback that moves to the neighbor closest to the target.
-
-    This is a lightweight replacement for the old 'fast' branch. It returns a path (including source and target)
-    or None if it gets stuck or cannot reach the target within max_nodes.
-    on_progress: optional callback(msg) for progress updates.
-    """
-    def _emit(msg: str):
-        try:
-            if on_progress:
-                on_progress(msg)
-            else:
-                if msg == '\n':
-                    print()
-                else:
-                    print(msg, end='\r', flush=True)
-        except Exception:
-            pass
-
-    cur = source
-    visited = set([cur['id64']])
-    path = [cur]
-    nodes_examined = 0
-    stalls = 0
-    while nodes_examined < max_nodes:
-        nodes_examined += 1
-        if nodes_examined % PROGRESS_INTERVAL == 0:
-            _emit(f"Greedy progress: examined {nodes_examined} nodes; path_len={len(path)}")
-        # if target within one hop, finish
-        dx = cur['coords']['x'] - target['coords']['x']
-        dy = cur['coords']['y'] - target['coords']['y']
-        dz = cur['coords']['z'] - target['coords']['z']
-        if dx*dx + dy*dy + dz*dz <= max_hop*max_hop:
-            path.append(target)
-            if nodes_examined >= PROGRESS_INTERVAL:
-                _emit('\n')
-            return path
-        
-        # compute step point max_hop away from cur towards target to find neighbors closest to max_hop
-        vx = target['coords']['x'] - cur['coords']['x']
-        vy = target['coords']['y'] - cur['coords']['y']
-        vz = target['coords']['z'] - cur['coords']['z']
-        mag = math.sqrt(vx*vx + vy*vy + vz*vz)
-        if mag == 0: break
-        tx = cur['coords']['x'] + (vx / mag) * max_hop
-        ty = cur['coords']['y'] + (vy / mag) * max_hop
-        tz = cur['coords']['z'] + (vz / mag) * max_hop
-        
-        fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
-        # Search around step point to find candidates near the max_hop limit
-        neighbors = neighbors_for_center_prefix(conn, fake_center, max_hop, visited, coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
-        
-        if not neighbors:
-            break
-            
-        # pick neighbor closest to the step point (i.e. closest to max_hop jump towards target)
-        best = None
-        best_step_d2 = None
-        cur_d2 = (cur['coords']['x'] - target['coords']['x'])**2 + (cur['coords']['y'] - target['coords']['y'])**2 + (cur['coords']['z'] - target['coords']['z'])**2
-        
-        for n in neighbors:
-            if n['id64'] in visited:
-                continue
-            # Must be within max_hop of current
-            dn_cur_d2 = (n['coords']['x']-cur['coords']['x'])**2 + (n['coords']['y']-cur['coords']['y'])**2 + (n['coords']['z']-cur['coords']['z'])**2
-            if dn_cur_d2 > max_hop**2:
-                continue
-            
-            # distance to step point
-            sd2 = (n['coords']['x']-tx)**2 + (n['coords']['y']-ty)**2 + (n['coords']['z']-tz)**2
-            if best is None or sd2 < best_step_d2:
-                best = n
-                best_step_d2 = sd2
-        
-        if best is None:
-            break
-            
-        # check if we are making progress towards target
-        best_d2 = (best['coords']['x'] - target['coords']['x'])**2 + (best['coords']['y'] - target['coords']['y'])**2 + (best['coords']['z'] - target['coords']['z'])**2
-        if best_d2 >= cur_d2:
-            stalls += 1
-            if stalls > 5:
-                break
-        else:
-            stalls = 0
-            
-        visited.add(best['id64'])
-        path.append(best)
-        cur = best
-    if nodes_examined >= PROGRESS_INTERVAL:
-        _emit('\n')
-    return None
-
-
-def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.05, fallback_to_greedy: bool = True, greedy_nodes: int = 500, greedy_neighbors: int = 200, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.05, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
     """Directional stepping pathfinder (approximate, fast).
 
     From current system, compute a point max_hop towards target and search for a system near that point within an expanding radius starting at step_threshold.
@@ -515,7 +421,6 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
 
     Improvements to increase success rate while keeping speed:
     - If no candidate within max_hop found, try a slightly relaxed hop distance (relax_factor).
-    - If that still fails and fallback_to_greedy is True, run a short greedy search from the current point to reach target.
     """
     cur = source
     path = [cur]
@@ -617,21 +522,6 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
                 radius *= expand_factor
 
         if not found:
-            # fallback to a short greedy search from current point to attempt to reach target
-            if fallback_to_greedy:
-                if nodes >= PROGRESS_INTERVAL:
-                    _emit('\n')
-                try:
-                    _emit('Directional: falling back to short greedy search...')
-                except Exception:
-                    pass
-                greedy_path = find_path_greedy(conn, cur, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes=greedy_nodes, max_neighbors=greedy_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets, on_progress=_emit)
-                if greedy_path:
-                    # attach greedy path (skip duplicate current)
-                    path.extend(greedy_path[1:])
-                    if nodes >= PROGRESS_INTERVAL:
-                        _emit('\n')
-                    return path
             if nodes >= PROGRESS_INTERVAL:
                 _emit('\n')
             return None
