@@ -108,7 +108,19 @@ def api_path():
                 'hop_dist': round(hop_dist, 1)
             })
             prev = coords
-        return jsonify({'path': out, 'total': round(total, 1)})
+
+        # Efficiency metrics
+        s_coords = s['coords']
+        t_coords = t['coords']
+        direct_dist = ((t_coords['x']-s_coords['x'])**2 + (t_coords['y']-s_coords['y'])**2 + (t_coords['z']-s_coords['z'])**2) ** 0.5
+        diff_pct = ((total / direct_dist) - 1) * 100 if direct_dist > 0 else 0
+        
+        return jsonify({
+            'path': out, 
+            'total': round(total, 1), 
+            'direct': round(direct_dist, 1),
+            'diff_pct': round(diff_pct, 1)
+        })
     finally:
         conn.close()
 
@@ -171,7 +183,19 @@ def api_path_stream():
                     'hop_dist': round(hop_dist, 1)
                 })
                 prev = coords
-            result_q.put({'path': out, 'total': round(total, 1)})
+            
+            # Efficiency metrics
+            s_coords = s['coords']
+            t_coords = t['coords']
+            direct_dist = ((t_coords['x']-s_coords['x'])**2 + (t_coords['y']-s_coords['y'])**2 + (t_coords['z']-s_coords['z'])**2) ** 0.5
+            diff_pct = ((total / direct_dist) - 1) * 100 if direct_dist > 0 else 0
+
+            result_q.put({
+                'path': out, 
+                'total': round(total, 1),
+                'direct': round(direct_dist, 1),
+                'diff_pct': round(diff_pct, 1)
+            })
         except Exception as e:
             result_q.put({'error': str(e)})
         finally:

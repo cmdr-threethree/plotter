@@ -99,7 +99,7 @@ $('find').addEventListener('click', async ()=>{
       if(data.error){
         $('info').textContent = data.error;
       }else{
-        $('info').textContent = `Total distance: ${data.total.toFixed(1)}`;
+        $('info').textContent = `Total: ${data.total.toFixed(1)}ly | Direct: ${data.direct.toFixed(1)}ly | Diff: +${data.diff_pct.toFixed(1)}%`;
         const list = $('path-list');
         data.path.forEach((p, i)=>{
           const li = document.createElement('li');
