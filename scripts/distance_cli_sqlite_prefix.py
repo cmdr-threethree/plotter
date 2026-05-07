@@ -332,9 +332,9 @@ def get_system_by_query_prefix(conn: sqlite3.Connection, query: str, meta: Dict,
 
 
 def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_distance: float, visited: Set[int], coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None) -> List[Dict]:
-    """Return cached nearby neighbors within max_distance for center using R-tree.
+    """Return nearby neighbors within max_distance for center using R-tree or in-memory buckets.
 
-    Cache key ignores visited; visited filtering is applied after retrieving candidates.
+    visited filtering is applied after retrieving candidates.
     allowed_star_ids: if provided, only return neighbors whose star_type_id is in this set.
     """
     cx, cy, cz = center['coords']['x'], center['coords']['y'], center['coords']['z']
@@ -349,17 +349,8 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
 
     max_d2 = max_distance * max_distance
 
-    cache_key = (center['id64'], int(max_distance), coord_scale, int(max_neighbors), tuple(sorted(allowed_star_ids)) if allowed_star_ids else None)
-    manual_cache = getattr(neighbors_for_center_prefix, '_manual_cache', None)
-    if manual_cache is None:
-        from collections import OrderedDict
-        neighbors_for_center_prefix._manual_cache = OrderedDict()
-        manual_cache = neighbors_for_center_prefix._manual_cache
-
     if in_memory_buckets is not None:
-        # Fallback for preloaded data (which might still be bucket-based or we might change how preloading works)
-        # For now, let's keep it but it might need update if we want to preload R-tree
-        # Actually, let's just use R-tree for simplicity unless preloading is active.
+        # Fallback for preloaded data
         out: List[Tuple[float, Dict]] = []
         for bucket_list in in_memory_buckets.values():
             for r in bucket_list:
@@ -378,11 +369,6 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
                     out.append((d2, {'id64': sid, 'name': name, 'coords': {'x': x, 'y': y, 'z': z}, 'mainStar': star, 'star_type_id': star_id}))
         out.sort(key=lambda t: t[0])
         candidates = [t[1] for t in out[:max_neighbors]]
-        # store in manual cache
-        manual_cache[cache_key] = candidates
-    elif cache_key in manual_cache:
-        candidates = manual_cache[cache_key]
-        manual_cache.move_to_end(cache_key)
     else:
         # R-tree range query
         sql = '''
@@ -413,11 +399,6 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
         
         out.sort(key=lambda t: t[0])
         candidates = [t[1] for t in out[:max_neighbors]]
-        manual_cache[cache_key] = candidates
-
-    # Ensure cache doesn't grow too large
-    if len(manual_cache) > 2048:
-        manual_cache.popitem(last=False)
 
     # Filter out visited and self
     res = []
