@@ -90,12 +90,14 @@ $('find').addEventListener('click', async ()=>{
   es.addEventListener('progress', (ev)=>{
     try{
       const txt = ev.data;
+      console.log(txt);
       $('info').textContent = txt;
     }catch(e){/*ignore*/}
   });
   es.addEventListener('result', (ev)=>{
     try{
       const data = JSON.parse(ev.data);
+      console.log('Result:', data);
       if(data.error){
         $('info').textContent = data.error;
       }else{
@@ -165,6 +167,7 @@ $('find').addEventListener('click', async ()=>{
   });
   es.onerror = (ev)=>{
     // show network/stream error
+    console.error('Stream error:', ev);
     $('info').textContent = 'Stream error or connection closed';
     if(es){ es.close(); es = null; }
   };
