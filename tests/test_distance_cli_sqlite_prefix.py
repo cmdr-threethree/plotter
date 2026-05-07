@@ -130,7 +130,7 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         # Pathfinding between the two chosen systems using max_hop=40 (nodes are spaced 30 apart in sample_large)
         s1 = res2[0]
         s2 = mod.get_system_by_query_prefix(conn, second_sys['name'], meta, id_to_prefix, id_to_star, coord_scale)[0]
-        path = mod.find_path_directional(conn, s1, s2, max_hop=40.0, coord_scale=coord_scale, id_to_prefix=id_to_prefix, id_to_star=id_to_star, max_nodes=1000, max_neighbors=200)
+        path = mod.find_path_robust(conn, s1, s2, max_hop=40.0, coord_scale=coord_scale, id_to_prefix=id_to_prefix, id_to_star=id_to_star, max_nodes=1000, max_neighbors=200)
         self.assertIsNotNone(path)
         ids = [p['id64'] for p in path]
         self.assertEqual(ids[0], first_sys['id64'])

@@ -84,7 +84,7 @@ def api_path():
         def noop_progress(msg: str):
             return
         # find_path_directional now takes coord_scale, ID_TO_PREFIX, ID_TO_STAR instead of meta, bucket_size
-        path = distance.find_path_directional(conn, s, t, max_hop, coord_scale, ID_TO_PREFIX, ID_TO_STAR, on_progress=noop_progress)
+        path = distance.find_path_robust(conn, s, t, max_hop, coord_scale, ID_TO_PREFIX, ID_TO_STAR, on_progress=noop_progress)
         if path is None:
             return jsonify({'error': 'No path found'}), 404
         # compute hop distances and total
@@ -144,7 +144,7 @@ def api_path_stream():
                     pass
 
             try:
-                path = distance.find_path_directional(conn, s, t, max_hop, coord_scale, ID_TO_PREFIX, ID_TO_STAR, on_progress=on_progress)
+                path = distance.find_path_robust(conn, s, t, max_hop, coord_scale, ID_TO_PREFIX, ID_TO_STAR, on_progress=on_progress)
             except Exception as e:
                 result_q.put({'error': str(e)})
                 return

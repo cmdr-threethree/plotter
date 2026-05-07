@@ -30,6 +30,7 @@ import argparse
 import json
 import math
 import os
+import random
 import sqlite3
 import sys
 from collections import Counter
@@ -412,43 +413,15 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
     return res
 
 
-def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, backtrack_steps: int = 2, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
-    """Directional stepping pathfinder with bidirectional search, backtracking, and relaxation.
-
-    Tries to connect source and target by taking steps from both ends.
-    If stuck, backtracks N steps to find perpendicular alternatives before relaxing.
+def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, allow_relaxation: bool = False, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+    """Directional stepping pathfinder with bidirectional search.
+    If allow_relaxation is True, relaxes max_hop for a single step if stuck.
     """
     def _emit(msg: str):
         if on_progress: on_progress(msg)
         else:
             if msg == '\n': print()
             else: print(msg, end='\r', flush=True)
-
-    def _get_perp_neighbor(current: Dict, goal: Dict, visited: Set[int]) -> Optional[Dict]:
-        """Find a neighbor within max_hop that is most perpendicular to the target vector."""
-        cx, cy, cz = current['coords']['x'], current['coords']['y'], current['coords']['z']
-        gx, gy, gz = goal['coords']['x'], goal['coords']['y'], goal['coords']['z']
-        vx, vy, vz = gx - cx, gy - cy, gz - cz
-        v_mag = math.sqrt(vx*vx + vy*vy + vz*vz)
-        if v_mag == 0: return None
-        
-        # Search all neighbors within max_hop
-        cands = neighbors_for_center_prefix(conn, current, max_hop, visited, coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
-        if not cands: return None
-        
-        best = None
-        max_perp_d2 = -1.0
-        for c in cands:
-            wx, wy, wz = c['coords']['x'] - cx, c['coords']['y'] - cy, c['coords']['z'] - cz
-            # Project W onto V
-            dot = wx*vx + wy*vy + wz*vz
-            proj_len = dot / v_mag
-            # Perpendicular vector component squared: |W|^2 - (proj_len)^2
-            perp_d2 = (wx*wx + wy*wy + wz*wz) - (proj_len*proj_len)
-            if perp_d2 > max_perp_d2:
-                max_perp_d2 = perp_d2
-                best = c
-        return best
 
     def _step(current: Dict, goal: Dict, current_max_hop: float, visited_self: Set[int], visited_other: Dict[int, Dict]) -> Optional[Dict]:
         cx, cy, cz = current['coords']['x'], current['coords']['y'], current['coords']['z']
@@ -492,68 +465,134 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
     visited_f, visited_r = {source['id64']: source}, {target['id64']: target}
     curr_f, curr_r = source, target
 
-    _emit("Pathfinding: Starting bidirectional search...")
     for nodes in range(max_nodes):
         if nodes % 10 == 0:
             dx, dy, dz = curr_r['coords']['x']-curr_f['coords']['x'], curr_r['coords']['y']-curr_f['coords']['y'], curr_r['coords']['z']-curr_f['coords']['z']
             gap = math.sqrt(dx*dx + dy*dy + dz*dz)
             _emit(f"Search step {nodes}: gap={gap:.1f} nodes={len(path_f)+len(path_r)}")
 
-        # Try forward and reverse steps
         nxt_f = _step(curr_f, curr_r, max_hop, set(visited_f.keys()), visited_r)
         if nxt_f:
             if nxt_f['id64'] in visited_r:
                 idx = next(i for i, n in enumerate(path_r) if n['id64'] == nxt_f['id64'])
-                path_f.append(nxt_f); _emit('\n'); return path_f + path_r[:idx][::-1]
+                path_f.append(nxt_f); return path_f + path_r[:idx][::-1]
             path_f.append(nxt_f); visited_f[nxt_f['id64']] = nxt_f; curr_f = nxt_f; continue
 
         nxt_r = _step(curr_r, curr_f, max_hop, set(visited_r.keys()), visited_f)
         if nxt_r:
             if nxt_r['id64'] in visited_f:
                 idx = next(i for i, n in enumerate(path_f) if n['id64'] == nxt_r['id64'])
-                path_r.append(nxt_r); _emit('\n'); return path_f[:idx+1] + path_r[::-1][1:]
+                path_r.append(nxt_r); return path_f[:idx+1] + path_r[::-1][1:]
             path_r.append(nxt_r); visited_r[nxt_r['id64']] = nxt_r; curr_r = nxt_r; continue
 
-        # Both stuck, try backtracking for alternative "perpendicular" paths
-        found_alt = False
-        for i in range(1, backtrack_steps + 1):
-            if len(path_f) > i:
-                _emit(f"Pathfinding: Forward stuck, backtracking {i} steps...")
-                alt_base = path_f[-(i+1)]
-                alt = _get_perp_neighbor(alt_base, curr_r, set(visited_f.keys()))
-                if alt:
-                    path_f = path_f[:-i] + [alt]
-                    visited_f[alt['id64']] = alt; curr_f = alt; found_alt = True; break
-            if len(path_r) > i:
-                _emit(f"Pathfinding: Reverse stuck, backtracking {i} steps...")
-                alt_base = path_r[-(i+1)]
-                alt = _get_perp_neighbor(alt_base, curr_f, set(visited_r.keys()))
-                if alt:
-                    path_r = path_r[:-i] + [alt]
-                    visited_r[alt['id64']] = alt; curr_r = alt; found_alt = True; break
-        if found_alt: continue
+        if allow_relaxation:
+            _emit("Pathfinding: Stuck, trying relaxation...")
+            current_relax = relax_factor
+            while current_relax <= 3.0:
+                relaxed_hop = max_hop * current_relax
+                nxt_f = _step(curr_f, curr_r, relaxed_hop, set(visited_f.keys()), visited_r)
+                if nxt_f:
+                    if nxt_f['id64'] in visited_r:
+                        idx = next(i for i, n in enumerate(path_r) if n['id64'] == nxt_f['id64'])
+                        path_f.append(nxt_f); return path_f + path_r[:idx][::-1]
+                    path_f.append(nxt_f); visited_f[nxt_f['id64']] = nxt_f; curr_f = nxt_f; break
+                nxt_r = _step(curr_r, curr_f, relaxed_hop, set(visited_r.keys()), visited_f)
+                if nxt_r:
+                    if nxt_r['id64'] in visited_f:
+                        idx = next(i for i, n in enumerate(path_f) if n['id64'] == nxt_r['id64'])
+                        path_r.append(nxt_r); return path_f[:idx+1] + path_r[::-1][1:]
+                    path_r.append(nxt_r); visited_r[nxt_r['id64']] = nxt_r; curr_r = nxt_r; break
+                current_relax *= relax_factor
+            else: return None
+            continue
+        return None
+    return None
 
-        # Backtracking failed, resort to relaxation
-        _emit("Pathfinding: Stuck, trying relaxation...")
-        found_relaxed = False
-        current_relax = relax_factor
-        while current_relax <= 3.0:
-            relaxed_hop = max_hop * current_relax
-            nxt_f = _step(curr_f, curr_r, relaxed_hop, set(visited_f.keys()), visited_r)
-            if nxt_f:
-                if nxt_f['id64'] in visited_r:
-                    idx = next(i for i, n in enumerate(path_r) if n['id64'] == nxt_f['id64'])
-                    path_f.append(nxt_f); _emit('\n'); return path_f + path_r[:idx][::-1]
-                path_f.append(nxt_f); visited_f[nxt_f['id64']] = nxt_f; curr_f = nxt_f; found_relaxed = True; break
-            nxt_r = _step(curr_r, curr_f, relaxed_hop, set(visited_r.keys()), visited_f)
-            if nxt_r:
-                if nxt_r['id64'] in visited_f:
-                    idx = next(i for i, n in enumerate(path_f) if n['id64'] == nxt_r['id64'])
-                    path_r.append(nxt_r); _emit('\n'); return path_f[:idx+1] + path_r[::-1][1:]
-                path_r.append(nxt_r); visited_r[nxt_r['id64']] = nxt_r; curr_r = nxt_r; found_relaxed = True; break
-            current_relax *= relax_factor
-        if not found_relaxed: _emit('\n'); return None
-    _emit('\n'); return None
+
+def find_path_robust(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, waypoint_tries: int = 50, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+    """Directional stepping pathfinder with waypoint fallback and relaxation."""
+    def _emit(msg: str):
+        if on_progress: on_progress(msg)
+        else:
+            if msg == '\n': print()
+            else: print(msg, end='\r', flush=True)
+
+    # 1. Direct search (no relaxation)
+    _emit("Pathfinding: Starting direct search...")
+    res = find_path_directional(conn, source, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=on_progress)
+    if res: return res
+
+    # 2. Waypoint search
+    _emit(f"Pathfinding: Direct failed, trying {waypoint_tries} waypoints...")
+    ax, ay, az = source['coords']['x'], source['coords']['y'], source['coords']['z']
+    bx, by, bz = target['coords']['x'], target['coords']['y'], target['coords']['z']
+    vx, vy, vz = bx - ax, by - ay, bz - az
+    dist = math.sqrt(vx*vx + vy*vy + vz*vz)
+    if dist > 0:
+        # Midpoint
+        mx, my, mz = (ax + bx) / 2, (ay + by) / 2, (az + bz) / 2
+        # Find arbitrary perp vectors
+        if abs(vx) < abs(vy): n = (1.0, 0.0, 0.0)
+        else: n = (0.0, 1.0, 0.0)
+        # Cross product P1 = V x N
+        p1x, p1y, p1z = vy*n[2] - vz*n[1], vz*n[0] - vx*n[2], vx*n[1] - vy*n[0]
+        p1_mag = math.sqrt(p1x*p1x + p1y*p1y + p1z*p1z)
+        p1x, p1y, p1z = p1x/p1_mag, p1y/p1_mag, p1z/p1_mag
+        # P2 = V x P1
+        p2x, p2y, p2z = vy*p1z - vz*p1y, vz*p1x - vx*p1z, vx*p1y - vy*p1x
+        p2_mag = math.sqrt(p2x*p2x + p2y*p2y + p2z*p2z)
+        p2x, p2y, p2z = p2x/p2_mag, p2y/p2_mag, p2z/p2_mag
+
+        for i in range(waypoint_tries):
+            radius = ((i + 1) / waypoint_tries) * 0.5 * dist
+            angle = random.uniform(0, 2 * math.pi)
+            wx, wy, wz = mx + radius * (math.cos(angle)*p1x + math.sin(angle)*p2x), my + radius * (math.cos(angle)*p1y + math.sin(angle)*p2y), mz + radius * (math.cos(angle)*p1z + math.sin(angle)*p2z)
+            
+            _emit(f"Waypoint try {i+1}/{waypoint_tries} (radius={radius:.1f})...")
+            mid_sys = nearest_system(conn, {'x': wx, 'y': wy, 'z': wz}, coord_scale, id_to_prefix, id_to_star)
+            if not mid_sys or mid_sys['id64'] == source['id64'] or mid_sys['id64'] == target['id64']: continue
+            
+            # source -> mid
+            path1 = find_path_directional(conn, source, mid_sys, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=None)
+            if path1:
+                # mid -> target
+                path2 = find_path_directional(conn, mid_sys, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=None)
+                if path2:
+                    _emit('\n')
+                    return path1 + path2[1:]
+
+    # 3. Relaxation search
+    _emit("Pathfinding: Waypoints failed, resorting to relaxation...")
+    return find_path_directional(conn, source, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=True, on_progress=on_progress)
+
+
+def nearest_system(conn: sqlite3.Connection, near_coords: Dict, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], initial_radius: float = 50.0) -> Optional[Dict]:
+    """Find the nearest system to given coordinates using expanding radius R-tree search."""
+    radius = initial_radius
+    cx, cy, cz = near_coords['x'], near_coords['y'], near_coords['z']
+    while True:
+        s_dist = radius * coord_scale
+        s_cx, s_cy, s_cz = cx * coord_scale, cy * coord_scale, cz * coord_scale
+        min_x, max_x = s_cx - s_dist, s_cx + s_dist
+        min_y, max_y = s_cy - s_dist, s_cy + s_dist
+        min_z, max_z = s_cz - s_dist, s_cz + s_dist
+        sql = '''
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            FROM rtree_systems r
+            JOIN systems s ON s.id64 = r.id64
+            WHERE r.min_x BETWEEN ? AND ?
+              AND r.min_y BETWEEN ? AND ?
+              AND r.min_z BETWEEN ? AND ?
+            LIMIT 1
+        '''
+        row = conn.execute(sql, (min_x, max_x, min_y, max_y, min_z, max_z)).fetchone()
+        if row:
+            rx, ry, rz = row[3] / coord_scale, row[4] / coord_scale, row[5] / coord_scale
+            name = id_to_prefix.get(row[1], '') + (row[2] or '')
+            star = id_to_star.get(row[6], '')
+            return {'id64': row[0], 'name': name, 'coords': {'x': rx, 'y': ry, 'z': rz}, 'mainStar': star}
+        if radius > 10000: return None
+        radius *= 2
 
 
 def nearest_of_type(conn: sqlite3.Connection, near_coords: Dict, type_ids: List[int], coord_scale: int, initial_radius: float = 50.0) -> Optional[Dict]:
@@ -646,7 +685,7 @@ def main():
     parser.add_argument('--directional', action='store_true', help='Use directional stepping approximate pathfinder')
     parser.add_argument('--step-threshold', type=float, default=1.0, help='Initial threshold distance when searching near the step point')
     parser.add_argument('--step-expand-factor', type=float, default=2.0, help='Multiplier to expand search radius when no candidate found')
-    parser.add_argument('--backtrack-steps', type=int, default=2, help='Maximum steps to backtrack when stuck to find alternative paths')
+    parser.add_argument('--waypoint-tries', type=int, default=50, help='Number of random waypoints to try if direct path fails')
     parser.add_argument('--preload', action='store_true', help='Preload buckets between source and target into memory to avoid SQL roundtrips')
     parser.add_argument('--preload-margin-buckets', type=int, default=1, help='Extra bucket margin when preloading')
     parser.add_argument('--from', dest='from_sys', help='Source system name or id64')
@@ -825,7 +864,7 @@ def main():
         else:
             print(msg, end='\r', flush=True)
 
-    path = find_path_directional(conn, s1, s2, args.max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets, backtrack_steps=args.backtrack_steps, on_progress=cli_progress)
+    path = find_path_robust(conn, s1, s2, args.max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes=args.max_nodes, max_neighbors=args.max_neighbors, allowed_star_ids=allowed_star_ids, step_threshold=args.step_threshold, expand_factor=args.step_expand_factor, in_memory_buckets=in_memory_buckets, waypoint_tries=args.waypoint_tries, on_progress=cli_progress)
     if path is None:
         print('No path found')
         return
