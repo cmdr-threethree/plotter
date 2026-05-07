@@ -888,6 +888,17 @@ def main():
         print()
         prev = c
     print(f'Total path distance: {total:.1f}')
+    
+    # Calculate straight line distance
+    s_coords = s1['coords']
+    t_coords = s2['coords']
+    direct_dist = math.sqrt((t_coords['x']-s_coords['x'])**2 + (t_coords['y']-s_coords['y'])**2 + (t_coords['z']-s_coords['z'])**2)
+    print(f'Straight line distance: {direct_dist:.1f}')
+    
+    if direct_dist > 0:
+        diff_pct = ((total / direct_dist) - 1) * 100
+        print(f'Path is {diff_pct:.1f}% longer than straight line')
+    
     print('Done')
 
 if __name__ == '__main__':
