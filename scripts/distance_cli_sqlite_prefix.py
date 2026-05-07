@@ -553,10 +553,10 @@ def find_path_robust(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
             if not mid_sys or mid_sys['id64'] == source['id64'] or mid_sys['id64'] == target['id64']: continue
             
             # source -> mid
-            path1 = find_path_directional(conn, source, mid_sys, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=None)
+            path1 = find_path_directional(conn, source, mid_sys, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=on_progress)
             if path1:
                 # mid -> target
-                path2 = find_path_directional(conn, mid_sys, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=None)
+                path2 = find_path_directional(conn, mid_sys, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=on_progress)
                 if path2:
                     _emit('\n')
                     return path1 + path2[1:]
