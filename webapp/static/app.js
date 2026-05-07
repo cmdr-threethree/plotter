@@ -117,7 +117,7 @@ $('find').addEventListener('click', async ()=>{
       if(data.error){
         $('info').textContent = data.error;
       }else{
-        $('info').textContent = `Total: ${data.total.toFixed(1)}ly | Direct: ${data.direct.toFixed(1)}ly | Diff: +${data.diff_pct.toFixed(1)}%`;
+        $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;
         const list = $('path-list');
         data.path.forEach((p, i)=>{
           const li = document.createElement('li');
@@ -125,8 +125,14 @@ $('find').addEventListener('click', async ()=>{
           const strong = document.createElement('strong');
           strong.textContent = `${i+1}) ${p.name}`;
           li.appendChild(strong);
-          const meta = document.createTextNode(` id=${p.id64} coords=(${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) hop=${p.hop_dist.toFixed(1)} mainStar=${p.mainStar || ''}`);
+          const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) ${p.mainStar || ''} hop=${p.hop_dist.toFixed(1)} `);
           li.appendChild(meta);
+          if(p.hop_dist > max_hop){
+            const warn = document.createElement('strong');
+            warn.textContent = ' [Exceeds max hop]';
+            warn.style.color = 'red';
+            li.appendChild(warn);
+          }
           // click to copy system name to clipboard
           li.style.cursor = 'pointer';
           li.title = 'Click to copy system name';
@@ -191,9 +197,12 @@ $('find').addEventListener('click', async ()=>{
 
 $('find-nearest').addEventListener('click', async ()=>{
   const near = $('near').value.trim();
-  const types = $('near-types').value.trim();
-  if(!near || !types){
-    $('info').textContent = 'Enter reference point and star types';
+  types = $('near-types').value.trim();
+  if(!types){
+    types='Neutron Star'; // default to Neutron Star if no type specified';
+  }
+  if(!near){
+    $('info').textContent = 'Enter reference point';
     return;
   }
   $('info').textContent = 'Searching...';
