@@ -412,126 +412,86 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
     return res
 
 
-def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.05, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
     """Directional stepping pathfinder (approximate, fast).
 
-    From current system, compute a point max_hop towards target and search for a system near that point within an expanding radius starting at step_threshold.
-    Repeat until target is within max_hop. Returns a list of systems (including source and target) or None.
-    Progress is printed every PROGRESS_INTERVAL steps.
-
-    Improvements to increase success rate while keeping speed:
-    - If no candidate within max_hop found, try a slightly relaxed hop distance (relax_factor).
+    From current system, compute a point max_hop towards target and search for a system near that point within an expanding radius.
+    If stuck, try reverse search and then increasingly relaxed max_hop.
     """
-    cur = source
-    path = [cur]
-    visited = set([cur['id64']])
-    nodes = 0
     def _emit(msg: str):
-        try:
-            if on_progress:
-                on_progress(msg)
-            else:
-                # CLI fallback: mimic previous behavior (carriage-return updates)
-                if msg == '\n':
-                    print()
-                else:
-                    print(msg, end='\r', flush=True)
-        except Exception:
-            pass
+        if on_progress:
+            on_progress(msg)
+        else:
+            if msg == '\n': print()
+            else: print(msg, end='\r', flush=True)
 
-    while nodes < max_nodes:
-        nodes += 1
-        # progress indicator per step
-        if nodes % 2 == 0:
-            try:
-                dx_t = target['coords']['x'] - cur['coords']['x']
-                dy_t = target['coords']['y'] - cur['coords']['y']
-                dz_t = target['coords']['z'] - cur['coords']['z']
-                dist_to_target = math.sqrt(dx_t*dx_t + dy_t*dy_t + dz_t*dz_t)
-                _emit(f"Directional step {nodes}: at id={cur['id64']} dist_to_target={dist_to_target:.1f} path_len={len(path)}")
-            except Exception:
-                pass
+    def _step(current: Dict, goal: Dict, current_max_hop: float, visited: Set[int]) -> Optional[Dict]:
+        cx, cy, cz = current['coords']['x'], current['coords']['y'], current['coords']['z']
+        gx, gy, gz = goal['coords']['x'], goal['coords']['y'], goal['coords']['z']
+        
+        dx, dy, dz = gx - cx, gy - cy, gz - cz
+        d2 = dx*dx + dy*dy + dz*dz
+        if d2 <= current_max_hop*current_max_hop:
+            return goal
 
-        # check if target within a single hop
-        dx = cur['coords']['x'] - target['coords']['x']
-        dy = cur['coords']['y'] - target['coords']['y']
-        dz = cur['coords']['z'] - target['coords']['z']
-        if dx*dx + dy*dy + dz*dz <= max_hop*max_hop:
-            path.append(target)
-            if nodes >= PROGRESS_INTERVAL:
-                _emit('\n')
-            return path
+        mag = math.sqrt(d2)
+        tx, ty, tz = cx + (dx / mag) * current_max_hop, cy + (dy / mag) * current_max_hop, cz + (dz / mag) * current_max_hop
 
-        # compute step point max_hop away from cur towards target
-        vx = target['coords']['x'] - cur['coords']['x']
-        vy = target['coords']['y'] - cur['coords']['y']
-        vz = target['coords']['z'] - cur['coords']['z']
-        mag = math.sqrt(vx*vx + vy*vy + vz*vz)
-        if mag == 0:
-            return None
-        tx = cur['coords']['x'] + (vx / mag) * max_hop
-        ty = cur['coords']['y'] + (vy / mag) * max_hop
-        tz = cur['coords']['z'] + (vz / mag) * max_hop
-
-        # expanding radius search around step point
         radius = step_threshold
-        found = None
-        while radius <= max_hop:
+        while radius <= current_max_hop:
             fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
             cands = neighbors_for_center_prefix(conn, fake_center, radius, set(), coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
-            
             if cands:
-                # filter for those within max_hop of current and not visited
-                valid_cands = []
+                valid = []
                 for c in cands:
-                    if c['id64'] in visited:
-                        continue
-                    dx_c = c['coords']['x'] - cur['coords']['x']
-                    dy_c = c['coords']['y'] - cur['coords']['y']
-                    dz_c = c['coords']['z'] - cur['coords']['z']
-                    if dx_c*dx_c + dy_c*dy_c + dz_c*dz_c <= max_hop*max_hop:
-                        valid_cands.append(c)
-                
-                if valid_cands:
-                    # pick candidate closest to the step point (i.e. closest to max_hop jump)
-                    found = min(valid_cands, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
-                    break
-            
+                    if c['id64'] in visited: continue
+                    dcx, dcy, dcz = c['coords']['x'] - cx, c['coords']['y'] - cy, c['coords']['z'] - cz
+                    if dcx*dcx + dcy*dcy + dcz*dcz <= current_max_hop*current_max_hop:
+                        valid.append(c)
+                if valid:
+                    best = min(valid, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
+                    if current_max_hop > max_hop:
+                        best['_relaxed_hop'] = math.sqrt((best['coords']['x']-cx)**2 + (best['coords']['y']-cy)**2 + (best['coords']['z']-cz)**2)
+                    return best
             radius *= expand_factor
+        return None
 
-        if not found:
-            # try a relaxed search if still nothing found
-            relaxed_max = max_hop * relax_factor
-            radius = max_hop
-            while radius <= relaxed_max:
-                fake_center = {'id64': -1, 'coords': {'x': tx, 'y': ty, 'z': tz}}
-                cands = neighbors_for_center_prefix(conn, fake_center, radius, set(), coord_scale, id_to_prefix, id_to_star, max_neighbors=max_neighbors, allowed_star_ids=allowed_star_ids, in_memory_buckets=in_memory_buckets)
-                if cands:
-                    valid_cands = []
-                    for c in cands:
-                        if c['id64'] in visited:
-                            continue
-                        dx_c = c['coords']['x'] - cur['coords']['x']
-                        dy_c = c['coords']['y'] - cur['coords']['y']
-                        dz_c = c['coords']['z'] - cur['coords']['z']
-                        if dx_c*dx_c + dy_c*dy_c + dz_c*dz_c <= relaxed_max*relaxed_max:
-                            valid_cands.append(c)
-                    if valid_cands:
-                        found = min(valid_cands, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
-                        break
-                radius *= expand_factor
+    def _walk(start_node: Dict, end_node: Dict, current_max_hop: float, max_steps: int) -> Optional[List[Dict]]:
+        path = [start_node]
+        visited = {start_node['id64']}
+        curr = start_node
+        for _ in range(max_steps):
+            nxt = _step(curr, end_node, current_max_hop, visited)
+            if not nxt: return None
+            path.append(nxt)
+            if nxt['id64'] == end_node['id64']: return path
+            curr = nxt
+            visited.add(curr['id64'])
+        return None
 
-        if not found:
-            if nodes >= PROGRESS_INTERVAL:
-                _emit('\n')
-            return None
+    # 1. Forward search
+    _emit("Pathfinding: Forward search...")
+    res = _walk(source, target, max_hop, max_nodes)
+    if res: return res
 
-        # append found and continue
-        visited.add(found['id64'])
-        path.append(found)
-        cur = found
-    if nodes >= PROGRESS_INTERVAL:
-        _emit('\n')
+    # 2. Reverse search
+    _emit("Pathfinding: Forward failed, trying reverse search...")
+    res = _walk(target, source, max_hop, max_nodes)
+    if res:
+        # Reverse the path and handle relaxed markings if any (though unlikely here)
+        full_path = res[::-1]
+        # Recalculate relaxed hops for reverse path if we were to relax, but we aren't yet.
+        return full_path
+
+    # 3. Progressively relaxed search
+    current_relax = relax_factor
+    while current_relax < 3.0: # Cap relaxation to 3x max_hop
+        relaxed_hop = max_hop * current_relax
+        _emit(f"Pathfinding: Forward/Reverse failed, trying relaxed search (max_hop={relaxed_hop:.1f})...")
+        res = _walk(source, target, relaxed_hop, max_nodes)
+        if res: return res
+        current_relax *= relax_factor
+
     return None
 
 
@@ -821,7 +781,10 @@ def main():
             dz = c['z'] - prev['z']
             hop_dist = math.sqrt(dx*dx + dy*dy + dz*dz)
             total += hop_dist
-        print(f" {i}) {p['name']} id64={p['id64']} coords=({c['x']},{c['y']},{c['z']}) mainStar={p.get('mainStar')} hop_dist={hop_dist:.1f}")
+        print(f" {i}) {p['name']} id64={p['id64']} coords=({c['x']},{c['y']},{c['z']}) mainStar={p.get('mainStar')} hop_dist={hop_dist:.1f}", end='')
+        if '_relaxed_hop' in p:
+            print(f" [RELAXED: {p['_relaxed_hop']:.1f}]", end='')
+        print()
         prev = c
     print(f'Total path distance: {total:.1f}')
     print('Done')
