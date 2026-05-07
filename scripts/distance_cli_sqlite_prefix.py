@@ -509,13 +509,10 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
     return None
 
 
-def find_path_robust(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, waypoint_tries: int = 50, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
-    """Directional stepping pathfinder with waypoint fallback and relaxation."""
+def _find_path_robust_single(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, waypoint_tries: int = 50, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+    """Internal single-direction robust search logic."""
     def _emit(msg: str):
         if on_progress: on_progress(msg)
-        else:
-            if msg == '\n': print()
-            else: print(msg, end='\r', flush=True)
 
     # 1. Direct search (no relaxation)
     _emit("Pathfinding: Starting direct search...")
@@ -529,16 +526,12 @@ def find_path_robust(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
     vx, vy, vz = bx - ax, by - ay, bz - az
     dist = math.sqrt(vx*vx + vy*vy + vz*vz)
     if dist > 0:
-        # Midpoint
         mx, my, mz = (ax + bx) / 2, (ay + by) / 2, (az + bz) / 2
-        # Find arbitrary perp vectors
         if abs(vx) < abs(vy): n = (1.0, 0.0, 0.0)
         else: n = (0.0, 1.0, 0.0)
-        # Cross product P1 = V x N
         p1x, p1y, p1z = vy*n[2] - vz*n[1], vz*n[0] - vx*n[2], vx*n[1] - vy*n[0]
         p1_mag = math.sqrt(p1x*p1x + p1y*p1y + p1z*p1z)
         p1x, p1y, p1z = p1x/p1_mag, p1y/p1_mag, p1z/p1_mag
-        # P2 = V x P1
         p2x, p2y, p2z = vy*p1z - vz*p1y, vz*p1x - vx*p1z, vx*p1y - vy*p1x
         p2_mag = math.sqrt(p2x*p2x + p2y*p2y + p2z*p2z)
         p2x, p2y, p2z = p2x/p2_mag, p2y/p2_mag, p2z/p2_mag
@@ -552,18 +545,51 @@ def find_path_robust(conn: sqlite3.Connection, source: Dict, target: Dict, max_h
             mid_sys = nearest_system(conn, {'x': wx, 'y': wy, 'z': wz}, coord_scale, id_to_prefix, id_to_star)
             if not mid_sys or mid_sys['id64'] == source['id64'] or mid_sys['id64'] == target['id64']: continue
             
-            # source -> mid
-            path1 = find_path_directional(conn, source, mid_sys, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=on_progress)
+            path1 = find_path_directional(conn, source, mid_sys, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=None)
             if path1:
-                # mid -> target
-                path2 = find_path_directional(conn, mid_sys, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=on_progress)
+                path2 = find_path_directional(conn, mid_sys, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=False, on_progress=None)
                 if path2:
-                    _emit('\n')
                     return path1 + path2[1:]
 
     # 3. Relaxation search
     _emit("Pathfinding: Waypoints failed, resorting to relaxation...")
     return find_path_directional(conn, source, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, allow_relaxation=True, on_progress=on_progress)
+
+
+def find_path_robust(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, waypoint_tries: int = 50, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+    """Directional stepping pathfinder that searches both directions and picks the best."""
+    def _emit(msg: str):
+        if on_progress: on_progress(msg)
+        else:
+            if msg == '\n': print()
+            else: print(msg, end='\r', flush=True)
+
+    def _get_path_metrics(path: List[Dict]) -> Tuple[float, int]:
+        if not path: return (float('inf'), float('inf'))
+        dist = 0.0
+        relaxed = 0
+        for i in range(1, len(path)):
+            c1, c2 = path[i-1]['coords'], path[i]['coords']
+            dist += math.sqrt((c2['x']-c1['x'])**2 + (c2['y']-c1['y'])**2 + (c2['z']-c1['z'])**2)
+            if '_relaxed_hop' in path[i]: relaxed += 1
+        return (dist, relaxed)
+
+    _emit("Pathfinding: Searching A -> B...")
+    p1 = _find_path_robust_single(conn, source, target, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, waypoint_tries, on_progress=on_progress)
+    
+    _emit("Pathfinding: Searching B -> A...")
+    p2_rev = _find_path_robust_single(conn, target, source, max_hop, coord_scale, id_to_prefix, id_to_star, max_nodes, max_neighbors, allowed_star_ids, step_threshold, expand_factor, in_memory_buckets, relax_factor, waypoint_tries, on_progress=on_progress)
+    p2 = p2_rev[::-1] if p2_rev else None
+
+    m1 = _get_path_metrics(p1) if p1 else (float('inf'), float('inf'))
+    m2 = _get_path_metrics(p2) if p2 else (float('inf'), float('inf'))
+
+    if p1 and p2:
+        # Fewer relaxed hops is better. If tied, shorter distance is better.
+        if m1[1] < m2[1]: return p1
+        if m2[1] < m1[1]: return p2
+        return p1 if m1[0] <= m2[0] else p2
+    return p1 or p2
 
 
 def nearest_system(conn: sqlite3.Connection, near_coords: Dict, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], initial_radius: float = 50.0) -> Optional[Dict]:
