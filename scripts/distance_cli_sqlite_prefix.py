@@ -413,26 +413,29 @@ def neighbors_for_center_prefix(conn: sqlite3.Connection, center: Dict, max_dist
 
 
 def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, max_hop: float, coord_scale: int, id_to_prefix: Dict[int, str], id_to_star: Dict[int, str], max_nodes: int = 5000, max_neighbors: int = 500, allowed_star_ids: Optional[Set[int]] = None, step_threshold: float = 1.0, expand_factor: float = 2.0, in_memory_buckets: Optional[Dict[Tuple[int,int,int], List[Dict]]] = None, relax_factor: float = 1.1, on_progress: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
-    """Directional stepping pathfinder (approximate, fast).
+    """Directional stepping pathfinder with bidirectional search and per-step relaxation.
 
-    From current system, compute a point max_hop towards target and search for a system near that point within an expanding radius.
-    If stuck, try reverse search and then increasingly relaxed max_hop.
+    Tries to connect source and target by taking steps from both ends.
+    If stuck, relaxes the max_hop constraint for the current step only.
     """
     def _emit(msg: str):
-        if on_progress:
-            on_progress(msg)
+        if on_progress: on_progress(msg)
         else:
             if msg == '\n': print()
             else: print(msg, end='\r', flush=True)
 
-    def _step(current: Dict, goal: Dict, current_max_hop: float, visited: Set[int]) -> Optional[Dict]:
+    def _step(current: Dict, goal: Dict, current_max_hop: float, visited_self: Set[int], visited_other: Dict[int, Dict]) -> Optional[Dict]:
         cx, cy, cz = current['coords']['x'], current['coords']['y'], current['coords']['z']
         gx, gy, gz = goal['coords']['x'], goal['coords']['y'], goal['coords']['z']
-        
         dx, dy, dz = gx - cx, gy - cy, gz - cz
         d2 = dx*dx + dy*dy + dz*dz
+        
+        # If goal is within reach, return it
         if d2 <= current_max_hop*current_max_hop:
-            return goal
+            res = goal.copy()
+            if d2 > max_hop*max_hop:
+                res['_relaxed_hop'] = math.sqrt(d2)
+            return res
 
         mag = math.sqrt(d2)
         tx, ty, tz = cx + (dx / mag) * current_max_hop, cy + (dy / mag) * current_max_hop, cz + (dz / mag) * current_max_hop
@@ -444,54 +447,136 @@ def find_path_directional(conn: sqlite3.Connection, source: Dict, target: Dict, 
             if cands:
                 valid = []
                 for c in cands:
-                    if c['id64'] in visited: continue
+                    if c['id64'] in visited_self: continue
+                    # Must be within current_max_hop of current
                     dcx, dcy, dcz = c['coords']['x'] - cx, c['coords']['y'] - cy, c['coords']['z'] - cz
-                    if dcx*dcx + dcy*dcy + dcz*dcz <= current_max_hop*current_max_hop:
-                        valid.append(c)
+                    dist2 = dcx*dcx + dcy*dcy + dcz*dcz
+                    if dist2 <= current_max_hop*current_max_hop:
+                        # Check if it connects to the other side
+                        if c['id64'] in visited_other:
+                            res = visited_other[c['id64']].copy()
+                            if dist2 > max_hop*max_hop:
+                                res['_relaxed_hop'] = math.sqrt(dist2)
+                            return res
+                        valid.append((dist2, c))
                 if valid:
-                    best = min(valid, key=lambda c: (c['coords']['x']-tx)**2 + (c['coords']['y']-ty)**2 + (c['coords']['z']-tz)**2)
-                    if current_max_hop > max_hop:
-                        best['_relaxed_hop'] = math.sqrt((best['coords']['x']-cx)**2 + (best['coords']['y']-cy)**2 + (best['coords']['z']-cz)**2)
+                    dist2, best_c = min(valid, key=lambda t: (t[1]['coords']['x']-tx)**2 + (t[1]['coords']['y']-ty)**2 + (t[1]['coords']['z']-tz)**2)
+                    best = best_c.copy()
+                    if dist2 > max_hop*max_hop:
+                        best['_relaxed_hop'] = math.sqrt(dist2)
                     return best
             radius *= expand_factor
         return None
 
-    def _walk(start_node: Dict, end_node: Dict, current_max_hop: float, max_steps: int) -> Optional[List[Dict]]:
-        path = [start_node]
-        visited = {start_node['id64']}
-        curr = start_node
-        for _ in range(max_steps):
-            nxt = _step(curr, end_node, current_max_hop, visited)
-            if not nxt: return None
-            path.append(nxt)
-            if nxt['id64'] == end_node['id64']: return path
-            curr = nxt
-            visited.add(curr['id64'])
-        return None
+    path_f = [source]
+    path_r = [target]
+    visited_f = {source['id64']: source}
+    visited_r = {target['id64']: target}
+    curr_f = source
+    curr_r = target
 
-    # 1. Forward search
-    _emit("Pathfinding: Forward search...")
-    res = _walk(source, target, max_hop, max_nodes)
-    if res: return res
+    _emit("Pathfinding: Starting bidirectional search...")
+    for nodes in range(max_nodes):
+        if nodes % 10 == 0:
+            dx, dy, dz = curr_r['coords']['x']-curr_f['coords']['x'], curr_r['coords']['y']-curr_f['coords']['y'], curr_r['coords']['z']-curr_f['coords']['z']
+            gap = math.sqrt(dx*dx + dy*dy + dz*dz)
+            _emit(f"Search step {nodes}: gap={gap:.1f} nodes={len(path_f)+len(path_r)}")
 
-    # 2. Reverse search
-    _emit("Pathfinding: Forward failed, trying reverse search...")
-    res = _walk(target, source, max_hop, max_nodes)
-    if res:
-        # Reverse the path and handle relaxed markings if any (though unlikely here)
-        full_path = res[::-1]
-        # Recalculate relaxed hops for reverse path if we were to relax, but we aren't yet.
-        return full_path
+        # 1. Forward step
+        nxt_f = _step(curr_f, curr_r, max_hop, set(visited_f.keys()), visited_r)
+        if nxt_f:
+            if nxt_f['id64'] in visited_r:
+                # Connected!
+                idx = -1
+                for i, node in enumerate(path_r):
+                    if node['id64'] == nxt_f['id64']:
+                        idx = i
+                        break
+                # Update the connection hop distance/relaxation if needed
+                # The connection hop is curr_f -> nxt_f
+                # nxt_f in path_f will represent this jump
+                path_f.append(nxt_f)
+                res_path = path_f + path_r[:idx][::-1]
+                _emit('\n')
+                return res_path
+            path_f.append(nxt_f)
+            visited_f[nxt_f['id64']] = nxt_f
+            curr_f = nxt_f
+            continue
 
-    # 3. Progressively relaxed search
-    current_relax = relax_factor
-    while current_relax < 3.0: # Cap relaxation to 3x max_hop
-        relaxed_hop = max_hop * current_relax
-        _emit(f"Pathfinding: Forward/Reverse failed, trying relaxed search (max_hop={relaxed_hop:.1f})...")
-        res = _walk(source, target, relaxed_hop, max_nodes)
-        if res: return res
-        current_relax *= relax_factor
+        # 2. Reverse step
+        nxt_r = _step(curr_r, curr_f, max_hop, set(visited_r.keys()), visited_f)
+        if nxt_r:
+            if nxt_r['id64'] in visited_f:
+                # Connected!
+                idx = -1
+                for i, node in enumerate(path_f):
+                    if node['id64'] == nxt_r['id64']:
+                        idx = i
+                        break
+                # Connection hop is curr_r -> nxt_r (which is node in path_f)
+                # We'll attach the path_r (reversed) to path_f
+                # But wait, we need to handle the relaxed flag for the connection hop.
+                # If nxt_r was relaxed, it's already marked in nxt_r.
+                path_r.append(nxt_r)
+                res_path = path_f[:idx+1] + path_r[::-1][1:]
+                _emit('\n')
+                return res_path
+            path_r.append(nxt_r)
+            visited_r[nxt_r['id64']] = nxt_r
+            curr_r = nxt_r
+            continue
 
+        # 3. Both stuck, try relaxation for this step
+        _emit("Pathfinding: Stuck, trying relaxation...")
+        found_relaxed = False
+        current_relax = relax_factor
+        while current_relax <= 3.0:
+            relaxed_hop = max_hop * current_relax
+            # Try forward relaxed
+            nxt_f = _step(curr_f, curr_r, relaxed_hop, set(visited_f.keys()), visited_r)
+            if nxt_f:
+                if nxt_f['id64'] in visited_r:
+                    idx = -1
+                    for i, node in enumerate(path_r):
+                        if node['id64'] == nxt_f['id64']:
+                            idx = i
+                            break
+                    path_f.append(nxt_f)
+                    res_path = path_f + path_r[:idx][::-1]
+                    _emit('\n')
+                    return res_path
+                path_f.append(nxt_f)
+                visited_f[nxt_f['id64']] = nxt_f
+                curr_f = nxt_f
+                found_relaxed = True
+                break
+            
+            # Try reverse relaxed
+            nxt_r = _step(curr_r, curr_f, relaxed_hop, set(visited_r.keys()), visited_f)
+            if nxt_r:
+                if nxt_r['id64'] in visited_f:
+                    idx = -1
+                    for i, node in enumerate(path_f):
+                        if node['id64'] == nxt_r['id64']:
+                            idx = i
+                            break
+                    path_r.append(nxt_r)
+                    res_path = path_f[:idx+1] + path_r[::-1][1:]
+                    _emit('\n')
+                    return res_path
+                path_r.append(nxt_r)
+                visited_r[nxt_r['id64']] = nxt_r
+                curr_r = nxt_r
+                found_relaxed = True
+                break
+            current_relax *= relax_factor
+        
+        if not found_relaxed:
+            _emit('\n')
+            return None
+
+    _emit('\n')
     return None
 
 
