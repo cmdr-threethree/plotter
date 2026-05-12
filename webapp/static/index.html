@@ -52,8 +52,24 @@
       <section id="results">
         <h2>Results</h2>
         <div id="info"></div>
+        <div id="save-container" style="display: none; margin-bottom: 1em;">
+          <button id="save-route">💾 Save this route</button>
+        </div>
         <ol id="path-list"></ol>
       </section>
+
+      <div class="controls" style="margin-top: 2em;">
+        <h3>Saved Routes</h3>
+        <div class="row">
+          <select id="saved-routes-list">
+            <option value="">-- No saved routes --</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="load-route">📂 Load</button>
+          <button id="delete-route" style="background-color: #722;">🗑 Delete</button>
+        </div>
+      </div>
     </main>
     <footer>Flask + SPA demo</footer>
   </div>

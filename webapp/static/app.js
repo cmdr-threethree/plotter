@@ -70,10 +70,78 @@ $('reverse').addEventListener('click', ()=>{
 });
 
 let es = null;
+let lastResult = null;
+let currentParams = {};
+
+function renderPath(data, maxHop) {
+  const list = $('path-list');
+  list.innerHTML = '';
+  data.path.forEach((p, i)=>{
+    const li = document.createElement('li');
+    const strong = document.createElement('strong');
+    strong.textContent = `${i+1}) ${p.name}`;
+    li.appendChild(strong);
+    const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) ${p.mainStar || ''} hop=${p.hop_dist.toFixed(1)} `);
+    li.appendChild(meta);
+    if(p.hop_dist > maxHop){
+      const warn = document.createElement('strong');
+      warn.textContent = ' [Exceeds max hop]';
+      warn.style.color = 'red';
+      li.appendChild(warn);
+    }
+    li.style.cursor = 'pointer';
+    li.title = 'Click to copy system name';
+    li.addEventListener('click', async ()=>{
+      const txt = p.name || '';
+      try{
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          await navigator.clipboard.writeText(txt);
+        }else{
+          const ta = document.createElement('textarea');
+          ta.value = txt;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        if (window._infoRestoreTimeout == null) {
+          window._infoPrevText = $('info').textContent;
+        }
+        $('info').textContent = `Copied: ${txt}`;
+        if (window._infoRestoreTimeout) {
+          clearTimeout(window._infoRestoreTimeout);
+        }
+        window._infoRestoreTimeout = setTimeout(()=>{
+          $('info').textContent = window._infoPrevText || '';
+          window._infoRestoreTimeout = null;
+          window._infoPrevText = null;
+        }, 2000);
+      }catch(e){
+        if (window._infoRestoreTimeout == null) {
+          window._infoPrevText = $('info').textContent;
+        }
+        $('info').textContent = `Copy failed`;
+        if (window._infoRestoreTimeout) {
+          clearTimeout(window._infoRestoreTimeout);
+        }
+        window._infoRestoreTimeout = setTimeout(()=>{
+          $('info').textContent = window._infoPrevText || '';
+          window._infoRestoreTimeout = null;
+          window._infoPrevText = null;
+        }, 2000);
+      }
+    });
+    list.appendChild(li);
+  });
+}
+
 $('find').addEventListener('click', async ()=>{
   const source = $('source').value.trim();
   const target = $('target').value.trim();
   const max_hop = parseFloat($('max-hop').value) || 400;
+  
+  currentParams = {source, target, max_hop};
+
   // basic validation
   if(!source || !target){
     $('info').textContent = 'Enter both source and target';
@@ -90,12 +158,18 @@ $('find').addEventListener('click', async ()=>{
       $('info').textContent = `Target not found: ${target}`;
       return;
     }
+    // Update params with resolved names for cleaner storage
+    currentParams.source = sres[0].name;
+    currentParams.target = tres[0].name;
   }catch(e){
-    // ignore and proceed to let server return proper error
+    // ignore
   }
 
   $('info').textContent = 'Searching...';
   $('path-list').innerHTML = '';
+  $('save-container').style.display = 'none';
+  lastResult = null;
+
   // close previous EventSource if any
   if(es){
     es.close();
@@ -118,68 +192,9 @@ $('find').addEventListener('click', async ()=>{
         $('info').textContent = data.error;
       }else{
         $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;
-        const list = $('path-list');
-        data.path.forEach((p, i)=>{
-          const li = document.createElement('li');
-          // Build DOM nodes safely to avoid XSS — do not use innerHTML with untrusted data
-          const strong = document.createElement('strong');
-          strong.textContent = `${i+1}) ${p.name}`;
-          li.appendChild(strong);
-          const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) ${p.mainStar || ''} hop=${p.hop_dist.toFixed(1)} `);
-          li.appendChild(meta);
-          if(p.hop_dist > max_hop){
-            const warn = document.createElement('strong');
-            warn.textContent = ' [Exceeds max hop]';
-            warn.style.color = 'red';
-            li.appendChild(warn);
-          }
-          // click to copy system name to clipboard
-          li.style.cursor = 'pointer';
-          li.title = 'Click to copy system name';
-          li.addEventListener('click', async ()=>{
-            const txt = p.name || '';
-            try{
-              if(navigator.clipboard && navigator.clipboard.writeText){
-                await navigator.clipboard.writeText(txt);
-              }else{
-                // fallback
-                const ta = document.createElement('textarea');
-                ta.value = txt;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-              }
-              // Manage info area restore so multiple quick clicks don't overwrite previous content incorrectly
-              if (window._infoRestoreTimeout == null) {
-                window._infoPrevText = $('info').textContent;
-              }
-              $('info').textContent = `Copied: ${txt}`;
-              if (window._infoRestoreTimeout) {
-                clearTimeout(window._infoRestoreTimeout);
-              }
-              window._infoRestoreTimeout = setTimeout(()=>{
-                $('info').textContent = window._infoPrevText || '';
-                window._infoRestoreTimeout = null;
-                window._infoPrevText = null;
-              }, 2000);
-            }catch(e){
-              if (window._infoRestoreTimeout == null) {
-                window._infoPrevText = $('info').textContent;
-              }
-              $('info').textContent = `Copy failed`;
-              if (window._infoRestoreTimeout) {
-                clearTimeout(window._infoRestoreTimeout);
-              }
-              window._infoRestoreTimeout = setTimeout(()=>{
-                $('info').textContent = window._infoPrevText || '';
-                window._infoRestoreTimeout = null;
-                window._infoPrevText = null;
-              }, 2000);
-            }
-          });
-          list.appendChild(li);
-        });
+        lastResult = data;
+        $('save-container').style.display = 'block';
+        renderPath(data, max_hop);
       }
     }catch(e){
       $('info').textContent = 'Error parsing result';
@@ -195,11 +210,74 @@ $('find').addEventListener('click', async ()=>{
   };
 });
 
+function updateSavedRoutesDropdown() {
+  const select = $('saved-routes-list');
+  select.innerHTML = '';
+  const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+  const names = Object.keys(routes).sort();
+  if (names.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '-- No saved routes --';
+    select.appendChild(opt);
+  } else {
+    names.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+  }
+}
+
+$('save-route').addEventListener('click', () => {
+  if (!lastResult) return;
+  const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)`;
+  const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+  routes[name] = {
+    params: currentParams,
+    result: lastResult,
+    timestamp: Date.now()
+  };
+  localStorage.setItem('plotter_routes', JSON.stringify(routes));
+  updateSavedRoutesDropdown();
+  $('info').textContent = `Route saved: ${name}`;
+});
+
+$('load-route').addEventListener('click', () => {
+  const name = $('saved-routes-list').value;
+  if (!name) return;
+  const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+  const route = routes[name];
+  if (route) {
+    $('source').value = route.params.source;
+    $('target').value = route.params.target;
+    $('max-hop').value = route.params.max_hop;
+    currentParams = route.params;
+    lastResult = route.result;
+    
+    $('info').textContent = `Loaded: Total: ${lastResult.total.toFixed(1)} ly | Direct: ${lastResult.direct.toFixed(1)} ly | Diff: +${lastResult.diff_pct.toFixed(1)}%`;
+    $('save-container').style.display = 'block';
+    renderPath(lastResult, route.params.max_hop);
+  }
+});
+
+$('delete-route').addEventListener('click', () => {
+  const name = $('saved-routes-list').value;
+  if (!name) return;
+  if (confirm(`Delete saved route "${name}"?`)) {
+    const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+    delete routes[name];
+    localStorage.setItem('plotter_routes', JSON.stringify(routes));
+    updateSavedRoutesDropdown();
+  }
+});
+
 $('find-nearest').addEventListener('click', async ()=>{
   const near = $('near').value.trim();
-  types = $('near-types').value.trim();
+  let types = $('near-types').value.trim();
   if(!types){
-    types='Neutron Star'; // default to Neutron Star if no type specified';
+    types='Neutron Star'; 
   }
   if(!near){
     $('info').textContent = 'Enter reference point';
@@ -207,6 +285,8 @@ $('find-nearest').addEventListener('click', async ()=>{
   }
   $('info').textContent = 'Searching...';
   $('path-list').innerHTML = '';
+  $('save-container').style.display = 'none';
+  lastResult = null;
   
   try {
     const params = new URLSearchParams({near, types});
@@ -240,3 +320,5 @@ $('find-nearest').addEventListener('click', async ()=>{
     $('info').textContent = 'Error during search';
   }
 });
+
+updateSavedRoutesDropdown();
