@@ -1,0 +1,21 @@
+{
+  "name": "Elite Dangerous Plotter",
+  "short_name": "Plotter",
+  "description": "Route plotter with offline support for saved routes.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111",
+  "theme_color": "#222",
+  "icons": [
+    {
+      "src": "https://placehold.co/192x192/222/white?text=Plotter",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://placehold.co/512x512/222/white?text=Plotter",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
