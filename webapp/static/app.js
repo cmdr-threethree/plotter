@@ -333,8 +333,31 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then(reg => {
       console.log('SW registered:', reg);
+      
+      // Check for updates on load
+      reg.update();
+
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // New content is available; please refresh.
+            if (confirm('A new version of the Plotter is available. Update now?')) {
+              location.reload();
+            }
+          }
+        });
+      });
     }).catch(err => {
       console.log('SW registration failed:', err);
     });
+  });
+
+  // Handle controller change (e.g. after skipWaiting)
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
   });
 }
