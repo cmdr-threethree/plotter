@@ -1,0 +1,100 @@
+# Plotter — Elite Dangerous Pathfinding Tool
+
+A high-performance, SQLite-backed pathfinding and system search tool for Elite Dangerous. Plotter provides both a powerful CLI and a modern, offline-capable Web Application (PWA).
+
+## Features
+
+- **Robust Bidirectional Search**: Approximate pathfinding using directional stepping from both ends to ensure high connectivity and speed.
+- **Waypoint Fallbacks**: Automatically attempts to bypass "dead ends" using orthogonal waypoints when a direct route fails.
+- **Star Type Filtering**: Restrict pathfinding to specific star types (e.g., fuel stars or neutron stars).
+- **Nearest System Search**: Quickly find the nearest Neutron Star, White Dwarf, or any other star type from your current location or specific coordinates.
+- **Modern Web Interface**:
+    - **PWA / Offline Support**: Full Service Worker integration allows the app to load and display saved routes even without an internet connection.
+    - **Route Persistence**: Save results to browser local storage for instant retrieval.
+    - **Import/Export**: Share routes or back them up as JSON files.
+    - **Efficiency Metrics**: Calculates total distance, direct distance, and path overhead percentage.
+
+## Prerequisites
+
+- **Python 3.8+**
+- **Flask** (for the web application)
+
+```bash
+pip install -r webapp/requirements.txt
+```
+
+---
+
+## Initial Setup (Database Creation)
+
+Before using Plotter, you must initialize the metadata and the SQLite database from a source JSON file (e.g., `systems.json` from EDDN/EDSM).
+
+### 1. Build Metadata
+Extracts prefix information and star types from the source file to enable prefix compression and faster lookups.
+
+```bash
+python3 scripts/distance_cli_sqlite_prefix.py \
+  --file your_systems_file.json \
+  --build-meta
+```
+*This creates `meta.json` by default.*
+
+### 2. Build Search Index
+Parses the source JSON and populates a SQLite database with R-Tree spatial indexing.
+
+```bash
+python3 scripts/distance_cli_sqlite_prefix.py \
+  --file your_systems_file.json \
+  --db systems.db \
+  --build-index
+```
+*This process involves several stages (parsing, insertion, and R-Tree optimization) and may take some time depending on the file size.*
+
+---
+
+## CLI Usage
+
+### Find a Path
+```bash
+python3 scripts/distance_cli_sqlite_prefix.py \
+  --from "Sol" \
+  --to "Colonia" \
+  --max-hop 400
+```
+
+### Find Nearest Star Type
+```bash
+python3 scripts/distance_cli_sqlite_prefix.py \
+  --near "Sol" \
+  --nearest-type "Neutron Star"
+```
+
+---
+
+## Web Application
+
+The web app provides a user-friendly interface for pathfinding and route management.
+
+### Starting the Server
+```bash
+# Set environment variables if needed
+export PLOTTER_DB="systems.db"
+export PLOTTER_META="meta.json"
+
+python3 webapp/app.py
+```
+Access the UI at `http://localhost:5000`.
+
+### Development Notes
+If you modify the static assets (`app.js`, `styles.css`, etc.), remember to increment the `CACHE_NAME` in `webapp/static/sw.js` to ensure the Service Worker triggers an update for users.
+
+---
+
+## Architecture
+
+- **SQLite + R-Tree**: Uses SQLite's spatial indexing for fast $O(\log N)$ neighbor lookups.
+- **Prefix Compression**: Reduces database size and memory footprint by compressing common system name prefixes.
+- **Directional Stepping**: An optimized A*-like algorithm that steps towards the target from both the source and the target simultaneously.
+
+## License
+Public Domain
