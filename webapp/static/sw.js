@@ -1,4 +1,5 @@
-const CACHE_NAME = 'plotter-v2';
+const CACHE_NAME = 'plotter-v3';
+
 const ASSETS = [
   '/',
   '/index.html',
