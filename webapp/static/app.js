@@ -92,6 +92,10 @@ function renderPath(data, maxHop) {
     li.style.cursor = 'pointer';
     li.title = 'Click to copy system name';
     li.addEventListener('click', async ()=>{
+      // Clear previous highlight
+      document.querySelectorAll('#path-list li').forEach(el => el.classList.remove('highlight'));
+      li.classList.add('highlight');
+
       const txt = p.name || '';
       try{
         if(navigator.clipboard && navigator.clipboard.writeText){
@@ -307,6 +311,8 @@ $('find-nearest').addEventListener('click', async ()=>{
       li.appendChild(meta);
       
       li.addEventListener('click', async () => {
+        document.querySelectorAll('#path-list li').forEach(el => el.classList.remove('highlight'));
+        li.classList.add('highlight');
         try {
           await navigator.clipboard.writeText(data.name);
           $('info').textContent = `Copied: ${data.name}`;

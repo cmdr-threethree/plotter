@@ -13,5 +13,6 @@ button:active{transform:translateY(1px)}
 .suggest{padding:6px;border-radius:4px}
 .suggest:hover{background:#f0f4ff}
 #results{margin-top:18px}
-#path-list li{padding:8px;border-bottom:1px solid #f0f0f0}
+#path-list li{padding:8px;border-bottom:1px solid #f0f0f0;transition:background 0.2s}
+#path-list li.highlight{background:#e0f2fe;border-radius:4px;border-bottom-color:transparent}
 footer{margin-top:18px;font-size:13px;color:#666}
