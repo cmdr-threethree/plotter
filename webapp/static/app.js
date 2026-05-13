@@ -277,6 +277,59 @@ $('delete-route').addEventListener('click', () => {
   }
 });
 
+$('export-route').addEventListener('click', () => {
+  const name = $('saved-routes-list').value;
+  if (!name) return;
+  const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+  const route = routes[name];
+  if (route) {
+    const blob = new Blob([JSON.stringify(route, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name.replace(/[^a-z0-9]/gi, '_')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+});
+
+$('import-btn').addEventListener('click', () => {
+  $('import-file').click();
+});
+
+$('import-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+      
+      // Check if it's a single route or multiple
+      if (data.params && data.result) {
+        // Single route
+        const name = `${data.params.source} -> ${data.params.target} (${data.params.max_hop}ly) [Imported]`;
+        routes[name] = data;
+      } else {
+        // Assume collection of routes
+        Object.assign(routes, data);
+      }
+      
+      localStorage.setItem('plotter_routes', JSON.stringify(routes));
+      updateSavedRoutesDropdown();
+      alert('Routes imported successfully');
+    } catch (err) {
+      alert('Failed to import: Invalid JSON file');
+      console.error(err);
+    }
+    e.target.value = ''; // Reset input
+  };
+  reader.readAsText(file);
+});
+
 $('find-nearest').addEventListener('click', async ()=>{
   const near = $('near').value.trim();
   let types = $('near-types').value.trim();
