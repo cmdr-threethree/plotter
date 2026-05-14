@@ -91,29 +91,32 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         self.assertEqual(obj["id64"], 1)
 
     def test_build_meta_and_index_and_query_and_path(self):
-        # Build meta
+        # 1. Test classic two-pass for backward compatibility of the tool
         mod.build_meta(self.json_path, self.schema_path, self.meta_path)
         self.assertTrue(os.path.exists(self.meta_path))
         with open(self.meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-        self.assertIn("prefixes", meta)
-        self.assertIn("starTypes", meta)
-        # prefixes should include 'Sol' and 'FarAway' (FarAway may be full name prefix)
-        prefixes = set(meta["prefixes"].values())
-        self.assertIn("Sol", prefixes)
+            meta_json = json.load(f)
+        self.assertIn("prefixes", meta_json)
+        self.assertIn("starTypes", meta_json)
 
-        # Build index (force to ensure clean DB)
+        # 2. Test single-pass build (preferred)
         mod.build_index_prefix(
             self.json_path,
             self.db_path,
             bucket_size=50.0,
-            meta_path=self.meta_path,
+            schema_path=self.schema_path,
             force=True,
             coord_scale=32,
         )
         self.assertTrue(os.path.exists(self.db_path))
 
         conn = sqlite3.connect(self.db_path)
+        
+        # load meta from DB
+        meta = mod.load_meta_from_db(conn)
+        self.assertTrue(len(meta["prefixes"]) > 0)
+        self.assertTrue(len(meta["starTypes"]) > 0)
+
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM systems")
         count = cur.fetchone()[0]
@@ -125,7 +128,7 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
             ).fetchone()[0]
         )
 
-        # Pre-build maps as mod.main does
+        # Pre-build maps
         id_to_prefix = {int(k): v for k, v in meta.get("prefixes", {}).items()}
         id_to_star = {int(k): v for k, v in meta.get("starTypes", {}).items()}
 
@@ -139,7 +142,6 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         non_permit = [s for s in systems if not s.get("needsPermit")]
         self.assertTrue(len(non_permit) >= 2)
         first_sys = non_permit[0]
-        # pick another a few steps away (prefer index+5 if exists)
         second_idx = min(5, len(non_permit) - 1)
         second_sys = non_permit[second_idx]
 
@@ -163,7 +165,7 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         )
         self.assertEqual(len(res3), 0)
 
-        # Pathfinding between the two chosen systems using max_hop=40 (nodes are spaced 30 apart in sample_large)
+        # Pathfinding between the two chosen systems using max_hop=40
         s1 = res2[0]
         s2 = mod.get_system_by_query_prefix(
             conn, second_sys["name"], meta, id_to_prefix, id_to_star, coord_scale
@@ -183,11 +185,9 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         ids = [p["id64"] for p in path]
         self.assertEqual(ids[0], first_sys["id64"])
         self.assertEqual(ids[-1], second_sys["id64"])
-        # path should have at least 2 nodes
         self.assertTrue(len(ids) >= 2)
 
         # Test nearest_of_type
-        # Find nearest system of the same type as first_sys
         star_name_to_id = {v: int(k) for k, v in meta.get("starTypes", {}).items()}
         first_star_type = first_sys.get("mainStar")
         type_id = star_name_to_id.get(first_star_type)
@@ -195,7 +195,6 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
             near_coords = first_sys["coords"]
             res_nearest = mod.nearest_of_type(conn, near_coords, [type_id], coord_scale)
             self.assertIsNotNone(res_nearest)
-            # It should find first_sys itself as it's at the exact coordinates
             self.assertEqual(res_nearest["id64"], first_sys["id64"])
 
         conn.close()

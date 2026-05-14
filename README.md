@@ -27,28 +27,18 @@ pip install -r webapp/requirements.txt
 
 ## Initial Setup (Database Creation)
 
-Before using Plotter, you must initialize the metadata and the SQLite database from a source JSON file (e.g., `systems.json` from EDDN/EDSM).
+Before using Plotter, you must initialize the SQLite database from a source JSON file (e.g., `systems.json` from EDDN/EDSM).
 
-### 1. Build Metadata
-Extracts prefix information and star types from the source file to enable prefix compression and faster lookups.
-
-```bash
-python3 scripts/distance_cli_sqlite_prefix.py \
-  --file your_systems_file.json \
-  --build-meta
-```
-*This creates `meta.json` by default.*
-
-### 2. Build Search Index
-Parses the source JSON and populates a SQLite database with R-Tree spatial indexing.
+### Build Search Index (Single Pass)
+Parses the source JSON and populates a SQLite database with integrated metadata and R-Tree spatial indexing in a single pass.
 
 ```bash
 python3 scripts/distance_cli_sqlite_prefix.py \
-  --file your_systems_file.json \
+  --file systems.json \
   --db systems.db \
   --build-index
 ```
-*This process involves several stages (parsing, insertion, and R-Tree optimization) and may take some time depending on the file size.*
+*This dynamically populates prefix and star type metadata directly into the database.*
 
 ---
 
@@ -78,8 +68,8 @@ The web app provides a user-friendly interface for pathfinding and route managem
 ### Starting the Server
 ```bash
 # Set environment variables if needed
-export PLOTTER_DB="systems.db"
-export PLOTTER_META="meta.json"
+export PLOTTER_DB="data/systems.db"
+
 
 python3 webapp/app.py
 ```

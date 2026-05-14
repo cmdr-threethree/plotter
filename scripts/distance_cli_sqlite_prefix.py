@@ -3,26 +3,18 @@
 SQLite-backed distance/path tool with prefix compression and stdin input support.
 
 Features:
-- build-meta: scan systems (from file or stdin) and systems.schema.json to produce a meta JSON with:
-    {"prefixes": {"0": "" , "1": "Sol", ...}, "starTypes": {"0":"", "1":"G (White-Yellow) Star", ...}}
-  Prefix extraction rule: if name contains '-' use everything up to the first dash, otherwise use everything up to the first space; if neither, the whole name. Reserve id 0 for empty prefix.
-- build-index: read systems from file or stdin, skip systems needing a permit, and store prefix_id, name_suffix and star_type_id (integers) along with coordinates and bucket coords. Index is resumable (INSERT OR IGNORE) and shows progress.
-- query/pathfinding: loads the meta JSON to display prefix labels and star types. Pathfinding uses bucketed neighbor queries that only load nearby rows from sqlite.
+- build-index: (SINGLE PASS) read systems from file or stdin, skip systems needing a permit, and store prefix_id, name_suffix and star_type_id (integers) along with coordinates and bucket coords. Metadata (prefixes and star types) is dynamically discovered and stored in the database.
+- build-meta: (OPTIONAL) scan systems to produce a meta JSON. Now optional as build-index handles metadata automatically.
+- query/pathfinding: loads metadata directly from the SQLite database.
 
 I/O: pass --file - to read systems from stdin (useful with compressed files, e.g. zcat systems_neutron.json.gz | python ... --file - --build-index ...)
 
 Usage examples:
-  # generate meta from file:
-  python3 scripts/distance_cli_sqlite_prefix.py --build-meta --file systems_neutron.json --meta-file systems_meta.json
+  # build index in a single pass (recommended)
+  zcat systems_neutron.json.gz | python3 scripts/distance_cli_sqlite_prefix.py --build-index --db systems.db --file -
 
-  # or from stdin (compressed):
-  zcat systems_neutron.json.gz | python3 scripts/distance_cli_sqlite_prefix.py --build-meta --file - --meta-file systems_meta.json
-
-  # build index using stdin and meta
-  zcat systems_neutron.json.gz | python3 scripts/distance_cli_sqlite_prefix.py --build-index --use-prefix --meta-file systems_meta.json --db systems_index.db --bucket-size 50 --file -
-
-  # query
-  python3 scripts/distance_cli_sqlite_prefix.py --db systems_index.db --meta-file systems_meta.json --use-prefix --max-hop 40
+  # query (automatically loads meta from DB)
+  python3 scripts/distance_cli_sqlite_prefix.py --db systems.db --max-hop 40
 
 """
 
@@ -41,7 +33,7 @@ DEFAULT_DB = "systems_index.db"
 DEFAULT_META = "systems_meta.json"
 
 BATCH_SIZE = 1000
-PROGRESS_INTERVAL = 10
+PROGRESS_INTERVAL = 1000
 
 
 def clean_json_line(line: str) -> Optional[str]:
@@ -191,6 +183,24 @@ def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prefix ON systems(prefix_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_star_type ON systems(star_type_id)")
 
+    # New metadata tables
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prefixes (
+            id INTEGER PRIMARY KEY,
+            prefix TEXT UNIQUE
+        )
+    """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS star_types (
+            id INTEGER PRIMARY KEY,
+            type_name TEXT UNIQUE
+        )
+    """
+    )
+
     # Meta table for DB parameters
     cur.execute(
         """
@@ -203,19 +213,38 @@ def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def load_meta_from_db(conn: sqlite3.Connection) -> Dict:
+    cur = conn.cursor()
+    prefixes = {}
+    try:
+        cur.execute("SELECT id, prefix FROM prefixes")
+        for pid, prefix in cur:
+            prefixes[str(pid)] = prefix
+    except sqlite3.OperationalError:
+        pass
+
+    star_types = {}
+    try:
+        cur.execute("SELECT id, type_name FROM star_types")
+        for sid, name in cur:
+            star_types[str(sid)] = name
+    except sqlite3.OperationalError:
+        pass
+
+    return {"prefixes": prefixes, "starTypes": star_types}
+
+
 def build_index_prefix(
     json_path: str,
     db_path: str,
     bucket_size: float,
-    meta_path: str,
+    meta_path: Optional[str] = None,
+    schema_path: str = "systems.schema.json",
     coord_scale: int = 32,
     force: bool = False,
 ) -> None:
     if json_path != "-" and not os.path.exists(json_path):
         print(f"JSON file not found: {json_path}")
-        sys.exit(1)
-    if not os.path.exists(meta_path):
-        print(f"Meta file not found: {meta_path}. Run --build-meta first.")
         sys.exit(1)
 
     # If DB doesn't exist, we can set page_size
@@ -223,13 +252,6 @@ def build_index_prefix(
     if force and os.path.exists(db_path):
         print(f"--force given: removing existing DB {db_path}")
         os.remove(db_path)
-
-    with open(meta_path, "r", encoding="utf-8") as mf:
-        meta = json.load(mf)
-    prefixes = meta.get("prefixes", {})
-    prefix_to_id = {v: int(k) for k, v in prefixes.items()}
-    starTypes = meta.get("starTypes", {})
-    star_to_id = {v: int(k) for k, v in starTypes.items()}
 
     conn = sqlite3.connect(db_path)
     if is_new_db:
@@ -241,6 +263,51 @@ def build_index_prefix(
     ensure_schema_prefix(conn)
     cur = conn.cursor()
 
+    # Load existing meta from DB or file
+    meta = load_meta_from_db(conn)
+    if meta_path and os.path.exists(meta_path):
+        with open(meta_path, "r", encoding="utf-8") as mf:
+            meta = json.load(mf)
+
+    prefixes = meta.get("prefixes", {})
+    prefix_to_id = {v: int(k) for k, v in prefixes.items()}
+    star_types = meta.get("starTypes", {})
+    star_to_id = {v: int(k) for k, v in star_types.items()}
+
+    # If new DB and no star types, try loading from schema
+    if is_new_db and not star_to_id and os.path.exists(schema_path):
+        print(f"Loading star types from {schema_path}...")
+        try:
+            with open(schema_path, "r", encoding="utf-8") as sf:
+                schema = json.load(sf)
+                enum = (
+                    schema.get("items", {})
+                    .get("properties", {})
+                    .get("mainStar", {})
+                    .get("enum")
+                )
+                if isinstance(enum, list):
+                    for s in enum:
+                        if s not in star_to_id:
+                            new_id = len(star_to_id) + 1
+                            star_to_id[s] = new_id
+                            cur.execute(
+                                "INSERT OR IGNORE INTO star_types (id, type_name) VALUES (?, ?)",
+                                (new_id, s),
+                            )
+                    conn.commit()
+        except Exception as e:
+            print(f"Warning: could not load schema: {e}")
+
+    # Ensure empty prefix and empty star type (ID 0)
+    if "" not in prefix_to_id:
+        prefix_to_id[""] = 0
+        cur.execute("INSERT OR IGNORE INTO prefixes (id, prefix) VALUES (0, '')")
+    if "" not in star_to_id:
+        star_to_id[""] = 0
+        cur.execute("INSERT OR IGNORE INTO star_types (id, type_name) VALUES (0, '')")
+    conn.commit()
+
     # Store DB parameters
     cur.execute(
         "INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)",
@@ -249,6 +316,10 @@ def build_index_prefix(
     cur.execute(
         "INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)",
         ("bucket_size", str(bucket_size)),
+    )
+    cur.execute(
+        "INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)",
+        ("schema_version", "2"),
     )
     conn.commit()
 
@@ -267,7 +338,7 @@ def build_index_prefix(
         processed += 1
         if processed % PROGRESS_INTERVAL == 0:
             print(
-                f"Processed {processed} lines, inserted {inserted} rows...",
+                f"Processed {processed} lines, inserted {inserted} rows, prefixes {len(prefix_to_id)}...",
                 end="\r",
                 flush=True,
             )
@@ -285,8 +356,25 @@ def build_index_prefix(
             main_star = obj.get("mainStar")
             if name is None or coords is None:
                 continue
+
             prefix = extract_prefix(name)
-            prefix_id = prefix_to_id.get(prefix, 0)
+            if prefix not in prefix_to_id:
+                new_id = len(prefix_to_id)
+                prefix_to_id[prefix] = new_id
+                cur.execute(
+                    "INSERT INTO prefixes (id, prefix) VALUES (?, ?)", (new_id, prefix)
+                )
+
+            prefix_id = prefix_to_id[prefix]
+
+            if main_star and main_star not in star_to_id:
+                new_id = len(star_to_id)
+                star_to_id[main_star] = new_id
+                cur.execute(
+                    "INSERT INTO star_types (id, type_name) VALUES (?, ?)",
+                    (new_id, main_star),
+                )
+
             star_id = star_to_id.get(main_star, 0)
             suffix = name[len(prefix) :]
 
@@ -1100,7 +1188,7 @@ def main():
     )
     parser.add_argument("--file", "-f", default=DEFAULT_JSON)
     parser.add_argument("--db", default=DEFAULT_DB)
-    parser.add_argument("--meta-file", default=DEFAULT_META)
+    parser.add_argument("--meta-file")
     parser.add_argument("--bucket-size", type=float, default=50.0)
     parser.add_argument(
         "--coord-scale",
@@ -1180,15 +1268,23 @@ def main():
             )
             else "systems.schema.json"
         )
-        build_meta(args.file, schema_path, args.meta_file)
+        build_meta(args.file, schema_path, args.meta_file or DEFAULT_META)
         return
 
     if args.build_index:
+        schema_path = (
+            os.path.join(os.path.dirname(__file__), "..", "systems.schema.json")
+            if os.path.exists(
+                os.path.join(os.path.dirname(__file__), "..", "systems.schema.json")
+            )
+            else "systems.schema.json"
+        )
         build_index_prefix(
             args.file,
             args.db,
             args.bucket_size,
             args.meta_file,
+            schema_path=schema_path,
             coord_scale=args.coord_scale,
             force=args.force,
         )
@@ -1197,12 +1293,19 @@ def main():
     if not os.path.exists(args.db):
         print(f"DB not found: {args.db}. Run --build-index first.")
         sys.exit(1)
-    if not os.path.exists(args.meta_file):
-        print(f"Meta file {args.meta_file} not found; required.")
-        sys.exit(1)
 
-    with open(args.meta_file, "r", encoding="utf-8") as mf:
-        meta = json.load(mf)
+    conn = open_db(args.db)
+
+    # Load meta from DB or file
+    if args.meta_file and os.path.exists(args.meta_file):
+        with open(args.meta_file, "r", encoding="utf-8") as mf:
+            meta = json.load(mf)
+    else:
+        meta = load_meta_from_db(conn)
+
+    if not meta.get("prefixes"):
+        print(f"Error: No metadata found in {args.db} and no --meta-file provided.")
+        sys.exit(1)
 
     # Pre-build lookup maps to avoid rebuilding in hot loops
     prefixes = meta.get("prefixes", {})
@@ -1212,8 +1315,6 @@ def main():
 
     # build star name -> id map
     star_name_to_id = {v: int(k) for k, v in star_map.items()}
-
-    conn = open_db(args.db)
 
     # Load DB parameters
     try:

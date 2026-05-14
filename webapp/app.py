@@ -23,19 +23,22 @@ import distance_cli_sqlite_prefix as distance
 
 # Config via env or fall back to defaults in the imported module
 DB_PATH = os.environ.get("PLOTTER_DB", distance.DEFAULT_DB)
-META_PATH = os.environ.get("PLOTTER_META", distance.DEFAULT_META)
 BUCKET_SIZE_DEFAULT = 50.0
 
-# Load meta and pre-build lookup maps
+# Load meta and pre-build lookup maps from DB
 try:
-    with open(META_PATH, "r", encoding="utf-8") as mf:
-        META = json.load(mf)
+    if not os.path.exists(DB_PATH):
+        raise FileNotFoundError(f"Database not found: {DB_PATH}")
+    conn = distance.open_db(DB_PATH)
+    META = distance.load_meta_from_db(conn)
     ID_TO_PREFIX = {int(k): v for k, v in META.get("prefixes", {}).items()}
     ID_TO_STAR = {int(k): v for k, v in META.get("starTypes", {}).items()}
-except Exception:
-    META = {}
-    ID_TO_PREFIX = {}
-    ID_TO_STAR = {}
+    conn.close()
+    if not ID_TO_PREFIX:
+        raise ValueError(f"No metadata found in database: {DB_PATH}")
+except Exception as e:
+    print(f"FATAL: Error loading metadata from {DB_PATH}: {e}")
+    sys.exit(1)
 
 
 def get_db_params(conn: sqlite3.Connection):
