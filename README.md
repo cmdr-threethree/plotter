@@ -46,7 +46,7 @@ Parses the source JSON and populates a SQLite database with integrated metadata 
 ```bash
 python3 scripts/distance_cli_sqlite_prefix.py \
   --file systems.json \
-  --db systems.db \
+  --db data/systems.db \
   --build-index
 ```
 *This dynamically populates prefix and star type metadata directly into the database.*

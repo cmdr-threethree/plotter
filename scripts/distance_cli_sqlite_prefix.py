@@ -11,10 +11,10 @@ I/O: pass --file - to read systems from stdin (useful with compressed files, e.g
 
 Usage examples:
   # build index in a single pass (recommended)
-  zcat systems_neutron.json.gz | python3 scripts/distance_cli_sqlite_prefix.py --build-index --db systems.db --file -
+  zcat systems_neutron.json.gz | python3 scripts/distance_cli_sqlite_prefix.py --build-index --db data/systems.db --file -
 
   # query (automatically loads meta from DB)
-  python3 scripts/distance_cli_sqlite_prefix.py --db systems.db --max-hop 40
+  python3 scripts/distance_cli_sqlite_prefix.py --db data/systems.db --max-hop 40
 
 """
 
@@ -29,7 +29,7 @@ from collections import Counter
 from typing import Dict, List, Optional, Set, Tuple, Callable
 
 DEFAULT_JSON = "systems_neutron.json"
-DEFAULT_DB = "systems_index.db"
+DEFAULT_DB = "data/systems.db"
 DEFAULT_META = "systems_meta.json"
 
 BATCH_SIZE = 1000

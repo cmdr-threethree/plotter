@@ -5,7 +5,7 @@ The current database creation process requires two full passes over the source J
 1.  **Build Meta**: Scans all system names to build a frequency-sorted prefix map.
 2.  **Build Index**: Re-scans the JSON to populate the SQLite database using the generated `meta.json`.
 
-This approach doubles the I/O cost and complicates deployment by requiring two linked files (`systems.db` and `meta.json`) to be managed together.
+This approach doubles the I/O cost and complicates deployment by requiring two linked files (`data/systems.db` and `meta.json`) to be managed together.
 
 ## 2. Proposed Solution
 Transition to a **single-pass build process** where metadata is dynamically discovered and stored directly within the SQLite database.
