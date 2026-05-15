@@ -99,8 +99,8 @@ for line in sys.stdin:
         dt = now - last_time
         dl = line_count - last_count
         lps = dl / dt if dt > 0 else 0.0
-        print(f"\rProcessed {line_count:,} lines...  {lps:,.0f} lines/s",
-              end="", file=sys.stderr)
+        print(f"Processed {line_count:,} lines...  {lps:,.0f} lines/s",
+              end="\r", file=sys.stderr)
         last_time = now
         last_count = line_count
 
@@ -145,4 +145,4 @@ for line in sys.stdin:
         seen_cubes.add(h)
         print(json_dumps(obj))
 
-print(f"\rFinished. Total lines processed: {line_count:,}", file=sys.stderr)
+print(f"\nFinished. Total lines processed: {line_count:,}", file=sys.stderr)
