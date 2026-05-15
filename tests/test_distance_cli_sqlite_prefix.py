@@ -199,6 +199,86 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
 
         conn.close()
 
+    def test_neutron_highway_routing(self):
+        # 1. Create a line of systems
+        # A(0,0,0), B(100,0,0), C(200,0,0), D(300,0,0), E(400,0,0)
+        systems = [
+            {"id64": 10, "name": "A", "coords": {"x": 0, "y": 0, "z": 0}, "mainStar": "G"},
+            {"id64": 11, "name": "B", "coords": {"x": 100, "y": 0, "z": 0}, "mainStar": "N"},
+            {"id64": 12, "name": "C", "coords": {"x": 200, "y": 0, "z": 0}, "mainStar": "N"},
+            {"id64": 13, "name": "D", "coords": {"x": 300, "y": 0, "z": 0}, "mainStar": "N"},
+            {"id64": 14, "name": "E", "coords": {"x": 400, "y": 0, "z": 0}, "mainStar": "G"},
+        ]
+        base_json = os.path.join(self.tmpdir.name, "neutron_test_base.json")
+        with open(base_json, "w") as f:
+            f.write("[\n")
+            for i, s in enumerate(systems):
+                f.write(json.dumps(s))
+                if i < len(systems) - 1:
+                    f.write(",\n")
+                else:
+                    f.write("\n")
+            f.write("]\n")
+
+        # Build initial index
+        mod.build_index_prefix(base_json, self.db_path, bucket_size=50.0, force=True, coord_scale=32)
+
+        # Mark B, C, D as neutrons
+        neutron_systems = [systems[1], systems[2], systems[3]]
+        neutron_json = os.path.join(self.tmpdir.name, "neutron_test_only.json")
+        with open(neutron_json, "w") as f:
+            f.write("[\n")
+            for i, s in enumerate(neutron_systems):
+                f.write(json.dumps(s))
+                if i < len(neutron_systems) - 1:
+                    f.write(",\n")
+                else:
+                    f.write("\n")
+            f.write("]\n")
+
+        mod.build_index_prefix(neutron_json, self.db_path, bucket_size=50.0, mark_neutron=True, coord_scale=32)
+
+        conn = sqlite3.connect(self.db_path)
+        meta = mod.load_meta_from_db(conn)
+        id_to_prefix = {int(k): v for k, v in meta["prefixes"].items()}
+        id_to_star = {int(k): v for k, v in meta["starTypes"].items()}
+        coord_scale = 32
+
+        # Get source and target
+        s1 = mod.get_system_by_query_prefix(conn, "A", meta, id_to_prefix, id_to_star, coord_scale)[0]
+        s2 = mod.get_system_by_query_prefix(conn, "E", meta, id_to_prefix, id_to_star, coord_scale)[0]
+
+        # Test routing with max_hop = 150
+        # A -> B (100), B -> C (100), C -> D (100), D -> E (100)
+        path = mod.find_path_neutron_highway(
+            conn, s1, s2, max_hop=150.0, coord_scale=coord_scale,
+            id_to_prefix=id_to_prefix, id_to_star=id_to_star
+        )
+
+        self.assertIsNotNone(path)
+        self.assertEqual(len(path), 5)
+        self.assertEqual(path[0]["name"], "A")
+        self.assertEqual(path[-1]["name"], "E")
+        self.assertEqual(path[1]["name"], "B")
+        self.assertEqual(path[2]["name"], "C")
+        self.assertEqual(path[3]["name"], "D")
+
+        # Verify intermediate hops are neutrons (B, C, D)
+        # Check in DB
+        for hop in path[1:-1]:
+            cur = conn.execute("SELECT is_neutron FROM systems WHERE id64=?", (hop["id64"],))
+            self.assertEqual(cur.fetchone()[0], 1)
+
+        # Test if no neutron is found near source (radius expansion limit is 10000)
+        s_far = {"id64": 99, "name": "Far", "coords": {"x": 20000, "y": 0, "z": 0}, "mainStar": "G"}
+        path_far = mod.find_path_neutron_highway(
+            conn, s_far, s2, max_hop=150.0, coord_scale=coord_scale,
+            id_to_prefix=id_to_prefix, id_to_star=id_to_star
+        )
+        self.assertIsNone(path_far)
+
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

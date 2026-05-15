@@ -143,8 +143,9 @@ $('find').addEventListener('click', async ()=>{
   const source = $('source').value.trim();
   const target = $('target').value.trim();
   const max_hop = parseFloat($('max-hop').value) || 400;
+  const neutron_highway = $('neutron-highway').checked;
   
-  currentParams = {source, target, max_hop};
+  currentParams = {source, target, max_hop, neutron_highway};
 
   // basic validation
   if(!source || !target){
@@ -179,7 +180,7 @@ $('find').addEventListener('click', async ()=>{
     es.close();
     es = null;
   }
-  const params = new URLSearchParams({source, target, max_hop});
+  const params = new URLSearchParams({source, target, max_hop, neutron_highway});
   es = new EventSource(`/api/path/stream?${params.toString()}`);
   es.addEventListener('progress', (ev)=>{
     try{

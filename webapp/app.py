@@ -267,6 +267,7 @@ def api_path_stream():
         return jsonify({"error": "source and target required"}), 400
     db = DB_PATH
     max_hop = float(request.args.get("max_hop", 40.0))
+    neutron_highway = request.args.get("neutron_highway", "false").lower() == "true"
 
     progress_q = queue.Queue(maxsize=256)
     result_q = queue.Queue(maxsize=2)
@@ -295,16 +296,28 @@ def api_path_stream():
                     pass
 
             try:
-                path = distance.find_path_robust(
-                    conn,
-                    s,
-                    t,
-                    max_hop,
-                    coord_scale,
-                    ID_TO_PREFIX,
-                    ID_TO_STAR,
-                    on_progress=on_progress,
-                )
+                if neutron_highway:
+                    path = distance.find_path_neutron_highway(
+                        conn,
+                        s,
+                        t,
+                        max_hop,
+                        coord_scale,
+                        ID_TO_PREFIX,
+                        ID_TO_STAR,
+                        on_progress=on_progress,
+                    )
+                else:
+                    path = distance.find_path_robust(
+                        conn,
+                        s,
+                        t,
+                        max_hop,
+                        coord_scale,
+                        ID_TO_PREFIX,
+                        ID_TO_STAR,
+                        on_progress=on_progress,
+                    )
             except Exception as e:
                 result_q.put({"error": str(e)})
                 return
