@@ -1,76 +1,110 @@
 # Security
 
-## Known Vulnerabilities
+## Status of Previous Issues
 
-### CRITICAL — Path Traversal (`webapp/app.py`)
+### CRITICAL — Path Traversal ✅ FIXED
+The `/api/search`, `/api/path`, and `/api/path_stream` endpoints no longer accept user-controlled file paths. The database path is now loaded once from the `PLOTTER_DB` environment variable at startup and hardcoded for all requests.
 
-The `/api/search`, `/api/path`, and `/api/path_stream` endpoints accept `db` and `meta` query parameters and open them as file paths without validation:
+### HIGH — XSS via innerHTML ✅ FIXED  
+System names and metadata are now rendered using safe DOM APIs (`textContent`, `createElement`, `createTextNode`) instead of `innerHTML`. This prevents stored XSS attacks from malicious system names in the database.
 
-```python
-db = request.args.get('db', DB_PATH)
-meta_path = request.args.get('meta', META_PATH)
-with open(meta_path, 'r', encoding='utf-8') as mf: ...
-distance.open_db(db)
-```
+### MEDIUM — Flask Debug Mode ✅ FIXED
+Debug mode is now controlled by the `DEBUG` environment variable (defaults to `false`). The development server no longer exposes the interactive Werkzeug debugger by default.
 
-An attacker can read arbitrary files the process has access to (e.g. `/etc/shadow`, SSH keys, other SQLite databases).
-
-**Fix:** Remove user-controlled path parameters, or validate the resolved path against an allowlisted base directory using `os.path.realpath()`.
+### MEDIUM — SQL Query with f-string ✅ MITIGATED
+The SQL query building in `scripts/distance_cli_sqlite_prefix.py` uses an f-string for placeholder concatenation, but actual parameter values are passed safely via parameterized queries. No SQL injection vector exists in current use.
 
 ---
 
-### HIGH — XSS via innerHTML (`webapp/static/app.js`)
+## Known Limitations for Production Deployment
 
-System names and star types returned from the API are inserted directly into the DOM using `innerHTML` without escaping:
+### No Authentication or Authorization
+**Risk:** The API endpoints are publicly accessible with no user authentication. Any client can query paths, search systems, and trigger computations.
 
-```javascript
-li.innerHTML = `<strong>${i+1}) ${p.name}</strong> ... mainStar=${p.mainStar || ''}`;
-```
+**Recommendation:** 
+- Add authentication (API keys, OAuth, or IP allowlisting) before exposing to untrusted networks.
+- Consider Flask-HTTPAuth or similar for lightweight API key validation.
+- Use environment variables to gate access (e.g., `PLOTTER_API_KEY`).
 
-A malicious system name in the database can execute arbitrary JavaScript in users' browsers.
+### No Rate Limiting
+**Risk:** Clients can submit unlimited concurrent pathfinding requests, exhausting server resources (CPU, memory, database connections).
 
-**Fix:** Use `textContent` or build the element tree with `document.createElement` / `document.createTextNode` instead of `innerHTML`.
+**Recommendation:**
+- Implement rate limiting per IP or API key using Flask-Limiter.
+- Set reasonable defaults (e.g., 10 requests/minute per client).
+- Add request timeouts to prevent long-running searches from blocking threads.
+
+### Insufficient Input Validation
+**Risk:** Numeric parameters (`max_hop`, `max_nodes`, `max_neighbors`, `step_threshold`, `expand_factor`) are parsed but not strictly validated for bounds.
+
+**Recommendation:**
+- Validate parameter ranges on all endpoints:
+  - `max_hop`: positive, reasonable upper bound (e.g., `<= 500000`)
+  - `max_nodes`: `>= 1`, `<= 10000`
+  - `max_neighbors`: `>= 1`, `<= 2000`
+  - `step_threshold`: positive, `<= max_hop`
+  - `expand_factor`: `> 1.0`, `<= 10.0`
+- Return HTTP 400 with clear error messages for invalid inputs.
+
+### No Request Timeouts
+**Risk:** Pathfinding searches on large databases can run indefinitely, blocking worker threads and preventing other requests from being served.
+
+**Recommendation:**
+- Set a per-request timeout (e.g., 5–10 minutes via `signal.alarm()` or threading).
+- Return HTTP 408 (Request Timeout) to the client with a clear error message.
+- Ensure timeout cleanup properly releases database connections.
+
+### Verbose Error Messages
+**Risk:** Stack traces and internal error details may leak information about the database schema or implementation.
+
+**Recommendation:**
+- Catch exceptions in API handlers and return sanitized messages.
+- Log full details server-side for debugging; return generic "Internal error" to clients.
+- Example: Instead of `{"error": "table systems not found"}`, return `{"error": "Database query failed"}`.
+
+### No HTTPS/TLS Enforcement
+**Risk:** API requests and responses travel in plaintext over HTTP if deployed without HTTPS.
+
+**Recommendation:**
+- Always deploy behind HTTPS (use a reverse proxy like Nginx or deploy with production WSGI server).
+- Set `Strict-Transport-Security` header to enforce HTTPS.
+
+### Database Permissions
+**Risk:** The SQLite database file is stored on disk with default OS permissions. Unauthorized users on the same machine could read or modify it.
+
+**Recommendation:**
+- Restrict file permissions to the application user (e.g., `chmod 600 data/systems.db`).
+- Use a more robust database (PostgreSQL, etc.) for multi-user environments with per-table ACLs.
+
+### No Logging or Monitoring
+**Risk:** Attacks, abuse, and errors are not recorded. Cannot detect anomalies or investigate incidents.
+
+**Recommendation:**
+- Enable application logging to capture API requests, errors, and timings.
+- Log all search/pathfinding requests with client IP, parameters, and duration.
+- Set up alerts for high error rates or unusually long requests.
+- Consider using a structured logging library (e.g., Python's `logging` with JSON output).
 
 ---
 
-### MEDIUM — Flask Debug Mode Always Enabled (`webapp/app.py`)
+## Deployment Checklist
 
-The development server is started with `debug=True` unconditionally:
+For production deployments, follow these steps:
 
-```python
-app.run(host='0.0.0.0', port=port, debug=True)
-```
-
-Flask's debug mode exposes an interactive Python REPL accessible over the network, which allows arbitrary code execution.
-
-**Fix:** Gate debug mode on an environment variable and use a production WSGI server (e.g. Gunicorn) instead of Flask's built-in server:
-
-```python
-debug = os.environ.get('DEBUG', 'false').lower() == 'true'
-app.run(host='0.0.0.0', port=port, debug=debug)
-```
-
----
-
-### MEDIUM — SQL Query Built with f-string (`scripts/distance_cli_sqlite_prefix.py`)
-
-A SQL query is partially constructed via an f-string, mixing parameterised placeholders with string interpolation:
-
-```python
-placeholders = ','.join('?' for _ in type_ids)
-sql = f"SELECT ... WHERE star_type_id IN ({placeholders}) ..."
-```
-
-While `type_ids` is currently derived from an internal lookup, the f-string pattern is fragile and becomes a SQL injection vector if the data source ever changes.
-
-**Fix:** Build the query with plain string concatenation rather than an f-string:
-
-```python
-sql = "SELECT ... WHERE star_type_id IN (" + placeholders + ") ..."
-```
+- [ ] Use a production WSGI server (e.g., Gunicorn, uWSGI) instead of Flask's built-in server.
+- [ ] Set `DEBUG=false` environment variable.
+- [ ] Deploy behind an HTTPS reverse proxy (Nginx, Apache, etc.).
+- [ ] Implement authentication (API keys or IP allowlisting).
+- [ ] Enable rate limiting (Flask-Limiter or reverse proxy rules).
+- [ ] Validate all input parameters against documented bounds.
+- [ ] Set request timeouts (5–10 minutes recommended).
+- [ ] Configure logging to capture requests and errors.
+- [ ] Restrict database file permissions to application user only.
+- [ ] Run regular security audits and dependency updates.
+- [ ] Use environment variables for all sensitive configuration (no hardcoded secrets).
 
 ---
 
-## Reporting
+## Reporting Security Issues
 
 To report a new security issue privately, please open a [GitHub Security Advisory](https://github.com/cmdr-threethree/plotter/security/advisories/new).
