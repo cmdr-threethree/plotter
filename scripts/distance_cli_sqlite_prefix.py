@@ -1503,28 +1503,31 @@ def main():
         coord_scale = 1
         bucket_size = args.bucket_size
 
-    # If nearest-type requested, perform nearest search and exit
-    if args.nearest_type is not None:
-        if not args.near:
-            print("--near is required when using --nearest-type")
-            return
-        # resolve star type ids
-        types = [s.strip() for s in args.nearest_type.split(",") if s.strip()]
-        type_ids = None
-        if types:
-            type_ids = [star_name_to_id.get(t) for t in types if t in star_name_to_id]
-            if not type_ids:
-                print("No matching star types found in meta for:", types)
-                return
+    # If nearest search requested, perform search and exit
+    if args.nearest_type is not None or args.near is not None:
         # resolve near point
-        near = args.near.strip()
+        near = args.near or input("Enter reference point (name, id64, or x,y,z): ").strip()
+        if not near:
+            print("Reference point is required.")
+            return
+
+        # resolve star type ids
+        type_ids = None
+        if args.nearest_type:
+            types = [s.strip() for s in args.nearest_type.split(",") if s.strip()]
+            if types:
+                type_ids = [star_name_to_id.get(t) for t in types if t in star_name_to_id]
+                if not type_ids:
+                    print("No matching star types found in meta for:", types)
+                    return
+
         near_coords = None
         exclude_id64 = None
         # coordinate format x,y,z
         if "," in near:
             parts = near.split(",")
             if len(parts) != 3:
-                print("Invalid coordinates for --near. Use: x,y,z")
+                print("Invalid coordinates for reference point. Use: x,y,z")
                 return
             try:
                 near_coords = {
@@ -1541,7 +1544,7 @@ def main():
                 conn, near, meta, id_to_prefix, id_to_star, coord_scale
             )
             if not cand:
-                print("Could not resolve --near to a system:", near)
+                print("Could not resolve reference point to a system:", near)
                 return
             near_coords = cand[0]["coords"]
             exclude_id64 = cand[0]["id64"]
