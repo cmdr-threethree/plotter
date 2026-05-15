@@ -289,6 +289,44 @@ For production deployments, follow these steps:
 
 ---
 
+## Docker Deployment Security
+
+### Container Hardening
+
+- [ ] Run container as non-root user (create dedicated app user)
+- [ ] Use specific Python base image tag (e.g., `python:3.11.8-slim-bookworm` not `3.11-slim`)
+- [ ] Add `.dockerignore` to exclude `.git`, `.env`, caches, and test files
+- [ ] Implement HEALTHCHECK for orchestrator liveness detection
+- [ ] Run with `--read-only` filesystem where possible; mount `/app/data` as writable volume only
+- [ ] Set resource limits (memory: 512M, CPU: 1 core recommended)
+- [ ] Use multi-stage builds to reduce final image size and attack surface
+
+### Gunicorn Configuration
+
+- [ ] Set `--workers` to `2 * CPU_CORES + 1` (currently hardcoded to 1)
+- [ ] Add `--timeout 300` (5 minutes) to prevent hanging requests
+- [ ] Enable `--access-logfile -` for centralized logging (already configured)
+- [ ] Consider `--max-requests 1000` to recycle workers and prevent memory leaks
+- [ ] Set `--worker-class gthread` (already configured) for concurrent request handling
+
+### Image Security Scanning
+
+- [ ] Scan built image with Trivy: `trivy image <image:tag>`
+- [ ] Scan with Grype for additional CVE detection
+- [ ] Pin all Python package versions in `requirements.txt` (already done)
+- [ ] Regenerate requirements.txt periodically and rebuild images
+- [ ] Use private container registry with image signing (Cosign)
+
+### Orchestration (K8s / Docker Compose)
+
+- [ ] Use network policies to restrict inter-pod communication
+- [ ] Implement Pod Security Policies / Pod Security Standards (Kubernetes)
+- [ ] Use secrets management (Kubernetes Secrets, HashiCorp Vault) for `PLOTTER_API_KEY` if added
+- [ ] Enable audit logging for container runtime (containerd/Docker)
+- [ ] Use immutable image tags in production (e.g., `plotter:v1.2.3` not `latest`)
+
+---
+
 ## Reporting Security Issues
 
 To report a new security issue privately, please open a [GitHub Security Advisory](https://github.com/cmdr-threethree/plotter/security/advisories/new).
