@@ -87,6 +87,187 @@ The SQL query building in `scripts/distance_cli_sqlite_prefix.py` uses an f-stri
 
 ---
 
+## Supply Chain Security
+
+### Dependency Management
+
+The project currently uses **minimal, well-maintained dependencies**:
+- **Flask ecosystem** (web framework, templating, security utilities)
+- **Gunicorn** (production WSGI server)
+- **Click & Blinker** (CLI and event utilities)
+
+**Current practices:**
+- ✅ Exact version pinning in `webapp/requirements.txt`
+- ❌ No hash verification or lock files
+- ❌ No automated vulnerability scanning
+- ❌ No SBOM (Software Bill of Materials)
+
+### Recommended Controls
+
+#### 1. Enable Hash Verification
+Add `--require-hashes` to pip installation to ensure packages haven't been tampered with:
+
+```bash
+# Generate hashes
+pip install pip-tools
+pip-compile --generate-hashes webapp/requirements.txt -o webapp/requirements.lock
+
+# Install with hash verification
+pip install --require-hashes -r webapp/requirements.lock
+```
+
+#### 2. Automated Vulnerability Scanning
+Enable GitHub's **Dependabot** to scan for vulnerable dependencies:
+- Create `.github/dependabot.yml`:
+  ```yaml
+  version: 2
+  updates:
+    - package-ecosystem: "pip"
+      directory: "/webapp"
+      schedule:
+        interval: "weekly"
+      open-pull-requests-limit: 5
+      reviewers:
+        - cmdr-threethree
+  ```
+- GitHub will automatically create PRs for security updates.
+
+#### 3. Regular Dependency Audits
+Run security audits regularly during development:
+```bash
+pip install safety bandit
+safety check -r webapp/requirements.txt
+bandit -r scripts/ webapp/
+```
+
+#### 4. Minimize Dependencies
+- Audit existing dependencies for necessity.
+- Remove unused packages to reduce attack surface.
+- Prefer stdlib (e.g., `json`, `sqlite3`) over external libraries where possible.
+
+#### 5. Generate Software Bill of Materials (SBOM)
+Document all dependencies for transparency and incident response:
+
+```bash
+pip install cyclonedx-bom
+cyclonedx-bom -o requirements-sbom.xml
+```
+
+### Build & Release Integrity
+
+#### 1. Signed Commits
+Enforce signed commits from trusted contributors:
+```bash
+git config --global user.signingkey <KEY_ID>
+git commit -S -m "message"
+```
+
+GitHub settings:
+- Require signed commits on main branch (Branch Protection Rules)
+- Dismiss stale PR approvals on new commits
+
+#### 2. Artifact Verification
+If distributing releases/containers:
+- Sign container images with Cosign
+- Sign release artifacts (tar.gz, wheels) with GPG
+- Publish signatures and public keys in release notes
+
+#### 3. CI/CD Security
+Add to GitHub Actions workflow:
+```yaml
+- name: Run dependency audit
+  run: |
+    pip install safety
+    safety check -r webapp/requirements.txt
+
+- name: Run SAST scanning
+  run: |
+    pip install bandit
+    bandit -r scripts/ webapp/ -f json -o bandit-report.json
+```
+
+### Developer Environment
+
+#### 1. Pre-commit Hooks
+Add `.pre-commit-config.yaml` to enforce security checks locally:
+```yaml
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-json
+      - id: check-yaml
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ['-c', '.bandit']
+        files: ^(scripts|webapp)/
+```
+
+#### 2. Dependency Pinning & Lock Files
+Maintain a lock file alongside `requirements.txt`:
+- Lock file: frozen exact versions with hashes (checked into git)
+- Dev requirement: allows flexible versions during development
+- Production deployment: always uses lock file
+
+#### 3. Contributor Onboarding
+Document for contributors:
+- Required: Sign commits with GPG
+- Recommended: Use pre-commit hooks locally
+- All PRs: Automatic security scanning via CI/CD
+
+### Third-Party Risks
+
+#### PyPI Package Risk
+- **Risk:** Compromised or typosquatted packages on PyPI
+- **Mitigation:**
+  - Use exact version pinning (done ✅)
+  - Verify package maintainers are trusted
+  - Review package source code before updating
+  - Monitor security advisories (e.g., [CVE Details](https://www.cvedetails.com/))
+
+#### Transitive Dependency Risk
+- **Risk:** Direct dependencies may pull in compromised sub-dependencies
+- **Mitigation:**
+  - `pip install pip-audit` and run regularly
+  - Use lock files with hash verification
+  - Pin sub-dependency versions in lock file if needed
+  - Example: `pip-audit --desc` shows all transitive deps
+
+#### Container/System Package Risk
+If deploying in containers:
+- Use minimal base image (e.g., `python:3.11-slim`)
+- Scan container images for vulnerabilities:
+  ```bash
+  pip install trivy
+  trivy image <image:tag>
+  ```
+- Keep OS packages updated (`apt update && apt upgrade`)
+
+---
+
+## Supply Chain Security Checklist
+
+- [ ] Enable Dependabot on GitHub for automatic vulnerability alerts.
+- [ ] Generate and commit `webapp/requirements.lock` with hashes.
+- [ ] Configure pip to require hash verification in production deployments.
+- [ ] Add pre-commit hooks for dependency and security scanning.
+- [ ] Run `pip-audit` and `safety check` in CI/CD pipeline.
+- [ ] Require signed commits from all contributors on main branch.
+- [ ] Document dependency rationale (why each package is necessary).
+- [ ] Audit transitive dependencies monthly.
+- [ ] Monitor security advisories for Flask, Gunicorn, and other key packages.
+- [ ] Generate SBOM for releases.
+- [ ] Set up alerts for new CVEs affecting pinned versions.
+- [ ] Review and validate all dependency updates before merging PRs.
+
+---
+
 ## Deployment Checklist
 
 For production deployments, follow these steps:
@@ -102,6 +283,9 @@ For production deployments, follow these steps:
 - [ ] Restrict database file permissions to application user only.
 - [ ] Run regular security audits and dependency updates.
 - [ ] Use environment variables for all sensitive configuration (no hardcoded secrets).
+- [ ] Verify all dependencies with hash checking enabled.
+- [ ] Scan container images for vulnerabilities (if containerized).
+- [ ] Document and maintain an up-to-date SBOM.
 
 ---
 
