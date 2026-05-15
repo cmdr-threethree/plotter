@@ -22,5 +22,5 @@ ENV PORT=5000
 # Create data directory for persistence
 RUN mkdir -p /app/data
 
-# Default command runs the web application
-CMD ["python", "webapp/app.py"]
+# Default command runs the web application using Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--worker-tmp-dir", "/dev/shm", "webapp.app:app"]
