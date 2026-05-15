@@ -23,6 +23,17 @@ A high-performance, SQLite-backed pathfinding and system search tool for Elite D
 pip install -r webapp/requirements.txt
 ```
 
+### Updating Dependencies
+To update dependencies to their latest versions and ensure they are pinned:
+
+```bash
+# Generate a report of the latest versions
+pip install -r webapp/requirements.txt --upgrade --dry-run --report report.json --ignore-installed
+
+# Manually update webapp/requirements.txt with the versions found in report.json
+# or use a tool like pip-compile if available.
+```
+
 ---
 
 ## Initial Setup (Database Creation)
