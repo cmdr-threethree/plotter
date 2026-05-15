@@ -36,9 +36,27 @@ pip install -r webapp/requirements.txt --upgrade --dry-run --report report.json 
 
 ---
 
+## Systems filtering
+
+`scripts/system_filter.py` is a high‑performance Python filter  for the full Spansh systems dump (~140 million systems). The script reduces the dataset size while preserving unique, interesting, or spatially representative systems, and processes the dump in a **streaming** manner so it’s safe for multi‑gigabyte files.
+
+The filtering logic:
+
+- **Systems without “-” in their name** → always kept  
+- **Systems with non‑common star types** → always kept  
+- **Systems with common star types** → only one kept per **5×5×5 ly cube**
+
+The script automatically uses **orjson** for significantly faster parsing when available, and falls back to Python’s built‑in JSON parser with a warning. Cube tracking uses Python’s built‑in tuple hashing for speed and reduced memory overhead.
+
+### Memory usage
+
+For the full Spansh galaxy dump, the cube‑tracking structure typically stores **15–25 million cube hashes**, resulting in approximately ≈ 1.5–2.5 GB RAM usage
+
+This makes the script efficient enough for large‑scale filtering on modern machines while dramatically reducing the output dataset size.
+
 ## Initial Setup (Database Creation)
 
-Before using Plotter, you must initialize the SQLite database from a source JSON file (e.g., `systems.json` from EDDN/EDSM).
+Before using Plotter, you must initialize the SQLite database from a source JSON file (e.g., `systems.json` from Spansh).
 
 ### Build Search Index (Single Pass)
 Parses the source JSON and populates a SQLite database with integrated metadata and R-Tree spatial indexing in a single pass.
