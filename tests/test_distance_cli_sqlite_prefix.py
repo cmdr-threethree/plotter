@@ -193,9 +193,11 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         type_id = star_name_to_id.get(first_star_type)
         if type_id is not None:
             near_coords = first_sys["coords"]
-            res_nearest = mod.nearest_of_type(conn, near_coords, [type_id], coord_scale)
-            self.assertIsNotNone(res_nearest)
-            self.assertEqual(res_nearest["id64"], first_sys["id64"])
+            # With self-exclusion, it should find another system of the same type (or return None if only one exists)
+            res_nearest = mod.nearest_of_type(conn, near_coords, [type_id], coord_scale, exclude_id64=first_sys["id64"])
+            if res_nearest:
+                self.assertNotEqual(res_nearest["id64"], first_sys["id64"])
+                self.assertTrue(res_nearest["dist"] >= 0)
 
         conn.close()
 

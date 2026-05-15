@@ -1240,11 +1240,14 @@ def nearest_system(
 def nearest_of_type(
     conn: sqlite3.Connection,
     near_coords: Dict,
-    type_ids: List[int],
+    type_ids: Optional[List[int]],
     coord_scale: int,
     initial_radius: float = 50.0,
+    exclude_id64: Optional[int] = None,
 ) -> Optional[Dict]:
-    """Find the nearest system of matching star type using expanding radius R-tree search."""
+    """Find the nearest system of matching star type (optional) using expanding radius R-tree search.
+    Excludes the system with exclude_id64 and any system at the exact same coordinates.
+    """
     radius = initial_radius
     cx, cy, cz = near_coords["x"], near_coords["y"], near_coords["z"]
 
@@ -1257,26 +1260,37 @@ def nearest_of_type(
         min_y, max_y = s_cy - s_dist, s_cy + s_dist
         min_z, max_z = s_cz - s_dist, s_cz + s_dist
 
-        placeholders = ",".join("?" for _ in type_ids)
-        sql = f"""
+        sql = """
             SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
             WHERE r.min_x BETWEEN ? AND ?
               AND r.min_y BETWEEN ? AND ?
               AND r.min_z BETWEEN ? AND ?
-              AND s.star_type_id IN ({placeholders})
         """
-        rows = conn.execute(
-            sql, (min_x, max_x, min_y, max_y, min_z, max_z, *type_ids)
-        ).fetchall()
+        params = [min_x, max_x, min_y, max_y, min_z, max_z]
+        if type_ids:
+            placeholders = ",".join("?" for _ in type_ids)
+            sql += f" AND s.star_type_id IN ({placeholders})"
+            params.extend(type_ids)
+
+        rows = conn.execute(sql, tuple(params)).fetchall()
 
         best = None
         best_d2 = None
 
         for r in rows:
+            # Exclude the reference system by ID
+            if exclude_id64 is not None and r[0] == exclude_id64:
+                continue
+
             # Unscale
             rx, ry, rz = r[3] / coord_scale, r[4] / coord_scale, r[5] / coord_scale
+
+            # Exclude systems at the exact same coordinates
+            if rx == cx and ry == cy and rz == cz:
+                continue
+
             d2 = (rx - cx) ** 2 + (ry - cy) ** 2 + (rz - cz) ** 2
             if d2 <= radius**2:
                 if best is None or d2 < best_d2:
@@ -1490,19 +1504,22 @@ def main():
         bucket_size = args.bucket_size
 
     # If nearest-type requested, perform nearest search and exit
-    if args.nearest_type:
+    if args.nearest_type is not None:
         if not args.near:
             print("--near is required when using --nearest-type")
             return
         # resolve star type ids
         types = [s.strip() for s in args.nearest_type.split(",") if s.strip()]
-        type_ids = [star_name_to_id.get(t) for t in types if t in star_name_to_id]
-        if not type_ids:
-            print("No matching star types found in meta for:", types)
-            return
+        type_ids = None
+        if types:
+            type_ids = [star_name_to_id.get(t) for t in types if t in star_name_to_id]
+            if not type_ids:
+                print("No matching star types found in meta for:", types)
+                return
         # resolve near point
         near = args.near.strip()
         near_coords = None
+        exclude_id64 = None
         # coordinate format x,y,z
         if "," in near:
             parts = near.split(",")
@@ -1527,9 +1544,10 @@ def main():
                 print("Could not resolve --near to a system:", near)
                 return
             near_coords = cand[0]["coords"]
+            exclude_id64 = cand[0]["id64"]
 
         # Use expanding R-tree search
-        result = nearest_of_type(conn, near_coords, type_ids, coord_scale)
+        result = nearest_of_type(conn, near_coords, type_ids, coord_scale, exclude_id64=exclude_id64)
         if not result:
             print("No matching systems found")
             return

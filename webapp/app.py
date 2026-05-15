@@ -103,8 +103,8 @@ def api_search():
 def api_nearest():
     near_q = request.args.get("near", "").strip()
     types_q = request.args.get("types", "").strip()
-    if not near_q or not types_q:
-        return jsonify({"error": "near and types required"}), 400
+    if not near_q:
+        return jsonify({"error": "near required"}), 400
 
     db = DB_PATH
     conn = distance.open_db(db)
@@ -112,6 +112,7 @@ def api_nearest():
         coord_scale, _ = get_db_params(conn)
         # 1. Resolve near point
         near_coords = None
+        exclude_id64 = None
         if "," in near_q:
             parts = near_q.split(",")
             if len(parts) == 3:
@@ -130,6 +131,7 @@ def api_nearest():
             )
             if cands:
                 near_coords = cands[0]["coords"]
+                exclude_id64 = cands[0]["id64"]
 
         if not near_coords:
             return (
@@ -138,17 +140,19 @@ def api_nearest():
             )
 
         # 2. Resolve star type ids
-        star_name_to_id = {v: k for k, v in ID_TO_STAR.items()}
-        type_parts = [t.strip() for t in types_q.split(",") if t.strip()]
-        type_ids = [star_name_to_id.get(t) for t in type_parts if t in star_name_to_id]
-        if not type_ids:
-            return (
-                jsonify({"error": f"no matching star types found for: {types_q}"}),
-                400,
-            )
+        type_ids = None
+        if types_q:
+            star_name_to_id = {v: k for k, v in ID_TO_STAR.items()}
+            type_parts = [t.strip() for t in types_q.split(",") if t.strip()]
+            type_ids = [star_name_to_id.get(t) for t in type_parts if t in star_name_to_id]
+            if not type_ids:
+                return (
+                    jsonify({"error": f"no matching star types found for: {types_q}"}),
+                    400,
+                )
 
         # 3. Search
-        res = distance.nearest_of_type(conn, near_coords, type_ids, coord_scale)
+        res = distance.nearest_of_type(conn, near_coords, type_ids, coord_scale, exclude_id64=exclude_id64)
         if not res:
             return jsonify({"error": "no matching systems found"}), 404
 

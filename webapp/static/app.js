@@ -334,9 +334,6 @@ $('import-file').addEventListener('change', (e) => {
 $('find-nearest').addEventListener('click', async ()=>{
   const near = $('near').value.trim();
   let types = $('near-types').value.trim();
-  if(!types){
-    types='Neutron Star'; 
-  }
   if(!near){
     $('info').textContent = 'Enter reference point';
     return;
