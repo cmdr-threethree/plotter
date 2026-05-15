@@ -25,6 +25,7 @@ import os
 import random
 import sqlite3
 import sys
+import time
 from collections import Counter
 from typing import Dict, List, Optional, Set, Tuple, Callable
 
@@ -84,11 +85,14 @@ def build_meta(json_path: str, schema_path: str, out_path: str) -> None:
 
     prefixes_counter = Counter()
     processed = 0
+    start_time = time.time()
     for line in iter_lines_from_source(json_path):
         processed += 1
         if processed % PROGRESS_INTERVAL == 0:
+            elapsed = time.time() - start_time
+            speed = processed / elapsed if elapsed > 0 else 0
             print(
-                f"Processed {processed} lines, prefixes {len(prefixes_counter)}",
+                f"Processed {processed} lines ({speed:.0f} sys/s), prefixes {len(prefixes_counter)}",
                 end="\r",
                 flush=True,
             )
@@ -138,8 +142,11 @@ def build_meta(json_path: str, schema_path: str, out_path: str) -> None:
     meta = {"prefixes": inv_prefix_map, "starTypes": inv_star_map}
     with open(out_path, "w", encoding="utf-8") as out:
         json.dump(meta, out, indent=2, ensure_ascii=False)
+    
+    elapsed = time.time() - start_time
+    speed = processed / elapsed if elapsed > 0 else 0
     print(
-        f"Meta written to {out_path}. Prefixes: {len(inv_prefix_map)-1}, starTypes: {len(inv_star_map)-1}"
+        f"Meta written to {out_path} in {elapsed:.1f}s ({speed:.0f} sys/s). Prefixes: {len(inv_prefix_map)-1}, starTypes: {len(inv_star_map)-1}"
     )
 
 
@@ -342,6 +349,7 @@ def build_index_prefix(
     rtree_batch: List[Tuple] = []
     inserted = 0
     processed = 0
+    start_time = time.time()
 
     print(
         f"Starting index build (scale={coord_scale}, resumable). Systems requiring permits are skipped."
@@ -349,8 +357,10 @@ def build_index_prefix(
     for line in iter_lines_from_source(json_path):
         processed += 1
         if processed % PROGRESS_INTERVAL == 0:
+            elapsed = time.time() - start_time
+            speed = processed / elapsed if elapsed > 0 else 0
             print(
-                f"Processed {processed} lines, inserted {inserted} rows, prefixes {len(prefix_to_id)}...",
+                f"Processed {processed} lines ({speed:.0f} sys/s), inserted {inserted} rows, prefixes {len(prefix_to_id)}...",
                 end="\r",
                 flush=True,
             )
@@ -421,8 +431,10 @@ def build_index_prefix(
     conn.commit()
     cur.execute("VACUUM;")
     conn.close()
+    elapsed = time.time() - start_time
+    speed = processed / elapsed if elapsed > 0 else 0
     print(
-        f"Index build complete. Processed {processed} lines; inserted {inserted} rows into {db_path}."
+        f"Index build complete in {elapsed:.1f}s ({speed:.0f} sys/s). Processed {processed} lines; inserted {inserted} rows into {db_path}."
     )
 
 
