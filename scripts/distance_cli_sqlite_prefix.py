@@ -165,10 +165,18 @@ def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
             y INTEGER,
             z INTEGER,
             star_type_id INTEGER,
-            name_suffix TEXT
+            name_suffix TEXT,
+            is_neutron INTEGER DEFAULT 0
         )
     """
     )
+    # Ensure the is_neutron column exists if the table was created by an older version
+    try:
+        cur.execute("ALTER TABLE systems ADD COLUMN is_neutron INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
     # Create R-tree for spatial queries
     cur.execute(
         """
@@ -182,6 +190,9 @@ def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_prefix ON systems(prefix_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_star_type ON systems(star_type_id)")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_systems_neutron ON systems(is_neutron) WHERE is_neutron = 1"
+    )
 
     # New metadata tables
     cur.execute(
@@ -242,6 +253,7 @@ def build_index_prefix(
     schema_path: str = "systems.schema.json",
     coord_scale: int = 32,
     force: bool = False,
+    mark_neutron: bool = False,
 ) -> None:
     if json_path != "-" and not os.path.exists(json_path):
         print(f"JSON file not found: {json_path}")
@@ -323,7 +335,7 @@ def build_index_prefix(
     )
     conn.commit()
 
-    insert_sql = "INSERT OR IGNORE INTO systems (id64,prefix_id,x,y,z,star_type_id,name_suffix) VALUES (?,?,?,?,?,?,?)"
+    insert_sql = "INSERT INTO systems (id64,prefix_id,x,y,z,star_type_id,name_suffix,is_neutron) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id64) DO UPDATE SET is_neutron = MAX(is_neutron, excluded.is_neutron)"
     rtree_sql = "INSERT OR IGNORE INTO rtree_systems (id64,min_x,max_x,min_y,max_y,min_z,max_z) VALUES (?,?,?,?,?,?,?)"
 
     batch: List[Tuple] = []
@@ -383,7 +395,9 @@ def build_index_prefix(
             iy = int(round(float(coords["y"]) * coord_scale))
             iz = int(round(float(coords["z"]) * coord_scale))
 
-            batch.append((sid, prefix_id, ix, iy, iz, star_id, suffix))
+            is_neutron_val = 1 if mark_neutron else 0
+
+            batch.append((sid, prefix_id, ix, iy, iz, star_id, suffix, is_neutron_val))
             rtree_batch.append((sid, ix, ix, iy, iy, iz, iz))
         except Exception:
             continue
@@ -481,6 +495,53 @@ def get_system_by_query_prefix(
     return out
 
 
+def nearest_neutron(
+    conn: sqlite3.Connection,
+    near_coords: Dict,
+    coord_scale: int,
+    id_to_prefix: Dict[int, str],
+    id_to_star: Dict[int, str],
+    initial_radius: float = 50.0,
+) -> Optional[Dict]:
+    """Find the nearest neutron star to given coordinates using expanding radius R-tree search."""
+    radius = initial_radius
+    cx, cy, cz = near_coords["x"], near_coords["y"], near_coords["z"]
+    while True:
+        s_dist = radius * coord_scale
+        s_cx, s_cy, s_cz = cx * coord_scale, cy * coord_scale, cz * coord_scale
+        min_x, max_x = s_cx - s_dist, s_cx + s_dist
+        min_y, max_y = s_cy - s_dist, s_cy + s_dist
+        min_z, max_z = s_cz - s_dist, s_cz + s_dist
+        sql = """
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            FROM rtree_systems r
+            JOIN systems s ON s.id64 = r.id64
+            WHERE r.min_x BETWEEN ? AND ?
+              AND r.min_y BETWEEN ? AND ?
+              AND r.min_z BETWEEN ? AND ?
+              AND s.is_neutron = 1
+            LIMIT 1
+        """
+        row = conn.execute(sql, (min_x, max_x, min_y, max_y, min_z, max_z)).fetchone()
+        if row:
+            rx, ry, rz = (
+                row[3] / coord_scale,
+                row[4] / coord_scale,
+                row[5] / coord_scale,
+            )
+            name = id_to_prefix.get(row[1], "") + (row[2] or "")
+            star = id_to_star.get(row[6], "")
+            return {
+                "id64": row[0],
+                "name": name,
+                "coords": {"x": rx, "y": ry, "z": rz},
+                "mainStar": star,
+            }
+        if radius > 10000:
+            return None
+        radius *= 2
+
+
 def neighbors_for_center_prefix(
     conn: sqlite3.Connection,
     center: Dict,
@@ -492,6 +553,7 @@ def neighbors_for_center_prefix(
     max_neighbors: int = 500,
     allowed_star_ids: Optional[Set[int]] = None,
     in_memory_buckets: Optional[Dict[Tuple[int, int, int], List[Dict]]] = None,
+    only_neutron: bool = False,
 ) -> List[Dict]:
     """Return nearby neighbors within max_distance for center using R-tree or in-memory buckets.
 
@@ -518,6 +580,8 @@ def neighbors_for_center_prefix(
                 sid = r["id64"]
                 star_id = r.get("star_type_id")
                 if allowed_star_ids and star_id not in allowed_star_ids:
+                    continue
+                if only_neutron and not r.get("is_neutron"):
                     continue
                 x, y, z = (
                     r["x"] / coord_scale,
@@ -557,6 +621,9 @@ def neighbors_for_center_prefix(
               AND r.min_y BETWEEN ? AND ?
               AND r.min_z BETWEEN ? AND ?
         """
+        if only_neutron:
+            sql += " AND s.is_neutron = 1"
+
         cur = conn.execute(sql, (min_x, max_x, min_y, max_y, min_z, max_z))
         out: List[Tuple[float, Dict]] = []
         for r in cur:
@@ -618,6 +685,7 @@ def find_path_directional(
     relax_factor: float = 1.1,
     allow_relaxation: bool = False,
     on_progress: Optional[Callable[[str], None]] = None,
+    only_neutron: bool = False,
 ) -> Optional[List[Dict]]:
     """Directional stepping pathfinder with bidirectional search.
     If allow_relaxation is True, relaxes max_hop for a single step if stuck.
@@ -675,6 +743,7 @@ def find_path_directional(
                 max_neighbors=max_neighbors,
                 allowed_star_ids=allowed_star_ids,
                 in_memory_buckets=in_memory_buckets,
+                only_neutron=only_neutron,
             )
             if cands:
                 valid = []
@@ -810,6 +879,7 @@ def _find_path_robust_single(
     relax_factor: float = 1.1,
     waypoint_tries: int = 50,
     on_progress: Optional[Callable[[str], None]] = None,
+    only_neutron: bool = False,
 ) -> Optional[List[Dict]]:
     """Internal single-direction robust search logic."""
 
@@ -836,6 +906,7 @@ def _find_path_robust_single(
         relax_factor,
         allow_relaxation=False,
         on_progress=on_progress,
+        only_neutron=only_neutron,
     )
     if res:
         return res
@@ -900,6 +971,7 @@ def _find_path_robust_single(
                 relax_factor,
                 allow_relaxation=False,
                 on_progress=on_progress,
+                only_neutron=only_neutron,
             )
             if path1:
                 path2 = find_path_directional(
@@ -919,6 +991,7 @@ def _find_path_robust_single(
                     relax_factor,
                     allow_relaxation=False,
                     on_progress=on_progress,
+                    only_neutron=only_neutron,
                 )
                 if path2:
                     return path1 + path2[1:]
@@ -942,6 +1015,7 @@ def _find_path_robust_single(
         relax_factor,
         allow_relaxation=True,
         on_progress=on_progress,
+        only_neutron=only_neutron,
     )
 
 
@@ -962,6 +1036,7 @@ def find_path_robust(
     relax_factor: float = 1.1,
     waypoint_tries: int = 50,
     on_progress: Optional[Callable[[str], None]] = None,
+    only_neutron: bool = False,
 ) -> Optional[List[Dict]]:
     """Directional stepping pathfinder that searches both directions and picks the best."""
 
@@ -1008,6 +1083,7 @@ def find_path_robust(
         relax_factor,
         waypoint_tries,
         on_progress=on_progress,
+        only_neutron=only_neutron,
     )
 
     _emit("Pathfinding: Searching B -> A...")
@@ -1028,6 +1104,7 @@ def find_path_robust(
         relax_factor,
         waypoint_tries,
         on_progress=on_progress,
+        only_neutron=only_neutron,
     )
     p2 = p2_rev[::-1] if p2_rev else None
 
@@ -1042,6 +1119,76 @@ def find_path_robust(
             return p2
         return p1 if m1[0] <= m2[0] else p2
     return p1 or p2
+
+
+def find_path_neutron_highway(
+    conn: sqlite3.Connection,
+    source: Dict,
+    target: Dict,
+    max_hop: float,
+    coord_scale: int,
+    id_to_prefix: Dict[int, str],
+    id_to_star: Dict[int, str],
+    max_nodes: int = 5000,
+    max_neighbors: int = 500,
+    allowed_star_ids: Optional[Set[int]] = None,
+    step_threshold: float = 1.0,
+    expand_factor: float = 2.0,
+    in_memory_buckets: Optional[Dict[Tuple[int, int, int], List[Dict]]] = None,
+    relax_factor: float = 1.1,
+    waypoint_tries: int = 50,
+    on_progress: Optional[Callable[[str], None]] = None,
+) -> Optional[List[Dict]]:
+    """Neutron highway strategy:
+    1. Find nearest neutron to source.
+    2. Route from that neutron to target using ONLY neutron stars for intermediate hops.
+    3. The destination target is allowed even if not a neutron star.
+    """
+
+    def _emit(msg: str):
+        if on_progress:
+            on_progress(msg)
+
+    _emit("Neutron Highway: Finding nearest neutron to source...")
+    near_neutron = nearest_neutron(
+        conn, source["coords"], coord_scale, id_to_prefix, id_to_star
+    )
+    if not near_neutron:
+        _emit("Neutron Highway: No neutron star found near source.")
+        return None
+
+    _emit(f"Neutron Highway: Nearest neutron is {near_neutron['name']}. Routing...")
+
+    path = find_path_robust(
+        conn,
+        near_neutron,
+        target,
+        max_hop,
+        coord_scale,
+        id_to_prefix,
+        id_to_star,
+        max_nodes=max_nodes,
+        max_neighbors=max_neighbors,
+        allowed_star_ids=allowed_star_ids,
+        step_threshold=step_threshold,
+        expand_factor=expand_factor,
+        in_memory_buckets=in_memory_buckets,
+        relax_factor=relax_factor,
+        waypoint_tries=waypoint_tries,
+        on_progress=on_progress,
+        only_neutron=True,
+    )
+
+    if not path:
+        return None
+
+    if path[0]["id64"] != source["id64"]:
+        # Prepend source if not already there
+        # Check if the first hop from source to near_neutron is within max_hop (optional, but good for correctness)
+        # Actually, the strategy says: Prepend the original source to the resulting path if the nearest neutron star is not the same as the source.
+        path = [source] + path
+
+    return path
 
 
 def nearest_system(
@@ -1199,6 +1346,9 @@ def main():
     parser.add_argument("--build-meta", action="store_true")
     parser.add_argument("--build-index", action="store_true")
     parser.add_argument(
+        "--mark-neutron", action="store_true", help="Mark imported systems as neutron stars"
+    )
+    parser.add_argument(
         "--force", action="store_true", help="Force rebuild index from scratch"
     )
     parser.add_argument(
@@ -1222,6 +1372,11 @@ def main():
         "--directional",
         action="store_true",
         help="Use directional stepping approximate pathfinder",
+    )
+    parser.add_argument(
+        "--neutron-highway",
+        action="store_true",
+        help="Use neutron highway routing strategy",
     )
     parser.add_argument(
         "--step-threshold",
@@ -1287,6 +1442,7 @@ def main():
             schema_path=schema_path,
             coord_scale=args.coord_scale,
             force=args.force,
+            mark_neutron=args.mark_neutron,
         )
         return
 
@@ -1453,7 +1609,7 @@ def main():
         # We need to unscale coords if we store them in in_memory_buckets, or handle it in neighbors_for_center_prefix
         # Let's keep the scaled values in the bucket list and have neighbors_for_center_prefix unscale them.
         sql = """
-            SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id 
+            SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,is_neutron
             FROM systems 
             WHERE (x/?) BETWEEN ? AND ? 
               AND (y/?) BETWEEN ? AND ? 
@@ -1478,6 +1634,7 @@ def main():
                 "y": r[4],
                 "z": r[5],
                 "star_type_id": r[6],
+                "is_neutron": r[7],
             }
             in_memory_buckets.setdefault((bx_i, by_i, bz_i), []).append(rec)
 
@@ -1489,23 +1646,43 @@ def main():
         else:
             print(msg, end="\r", flush=True)
 
-    path = find_path_robust(
-        conn,
-        s1,
-        s2,
-        args.max_hop,
-        coord_scale,
-        id_to_prefix,
-        id_to_star,
-        max_nodes=args.max_nodes,
-        max_neighbors=args.max_neighbors,
-        allowed_star_ids=allowed_star_ids,
-        step_threshold=args.step_threshold,
-        expand_factor=args.step_expand_factor,
-        in_memory_buckets=in_memory_buckets,
-        waypoint_tries=args.waypoint_tries,
-        on_progress=cli_progress,
-    )
+    if args.neutron_highway:
+        path = find_path_neutron_highway(
+            conn,
+            s1,
+            s2,
+            args.max_hop,
+            coord_scale,
+            id_to_prefix,
+            id_to_star,
+            max_nodes=args.max_nodes,
+            max_neighbors=args.max_neighbors,
+            allowed_star_ids=allowed_star_ids,
+            step_threshold=args.step_threshold,
+            expand_factor=args.step_expand_factor,
+            in_memory_buckets=in_memory_buckets,
+            waypoint_tries=args.waypoint_tries,
+            on_progress=cli_progress,
+        )
+    else:
+        path = find_path_robust(
+            conn,
+            s1,
+            s2,
+            args.max_hop,
+            coord_scale,
+            id_to_prefix,
+            id_to_star,
+            max_nodes=args.max_nodes,
+            max_neighbors=args.max_neighbors,
+            allowed_star_ids=allowed_star_ids,
+            step_threshold=args.step_threshold,
+            expand_factor=args.step_expand_factor,
+            in_memory_buckets=in_memory_buckets,
+            waypoint_tries=args.waypoint_tries,
+            on_progress=cli_progress,
+        )
+
     if path is None:
         print("No path found")
         return
