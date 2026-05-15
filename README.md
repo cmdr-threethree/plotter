@@ -67,6 +67,17 @@ python3 scripts/distance_cli_sqlite_prefix.py \
   --db data/systems.db \
   --build-index
 ```
+
+### Build Index with Streaming Filter (Recommended for Large Dumps)
+To process a full galaxy dump while downsampling dense regions and preserving interesting systems, you can pipe the filter output directly into the index builder:
+
+```bash
+# Example using a gzipped Spansh dump
+zcat systems.json.gz | \
+  python3 scripts/system_filter.py | \
+  python3 scripts/distance_cli_sqlite_prefix.py --build-index --db data/systems.db --file -
+```
+
 *This dynamically populates prefix and star type metadata directly into the database.*
 
 ---
