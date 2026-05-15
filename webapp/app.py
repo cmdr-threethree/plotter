@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import logging
 from flask import (
     Flask,
     request,
@@ -12,6 +13,10 @@ from flask import (
 import threading
 import queue
 import sqlite3
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Ensure scripts dir is importable so we can reuse logic without modifying it
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -37,7 +42,7 @@ try:
     if not ID_TO_PREFIX:
         raise ValueError(f"No metadata found in database: {DB_PATH}")
 except Exception as e:
-    print(f"FATAL: Error loading metadata from {DB_PATH}: {e}")
+    logger.error(f"FATAL: Error loading metadata from {DB_PATH}: {e}")
     sys.exit(1)
 
 
@@ -61,6 +66,15 @@ def get_db_params(conn: sqlite3.Connection):
 
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+
+# If running under Gunicorn, bridge logs
+if "gunicorn" in os.environ.get("SERVER_SOFTWARE", ""):
+    gunicorn_logger = logging.getLogger("gunicorn.error")
+    app.logger.handlers = gunicorn_logger.handlers
+    app.logger.setLevel(gunicorn_logger.level)
+    # Also redirect the module logger
+    logger.handlers = gunicorn_logger.handlers
+    logger.setLevel(gunicorn_logger.level)
 
 
 @app.route("/")
