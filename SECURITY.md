@@ -116,7 +116,7 @@ pip-compile --generate-hashes webapp/requirements.txt -o webapp/requirements.loc
 pip install --require-hashes -r webapp/requirements.lock
 ```
 
-#### 2. Automated Vulnerability Scanning
+#### 2. Automated Vulnerability Scanning ✅ DONE
 Enable GitHub's **Dependabot** to scan for vulnerable dependencies:
 - Create `.github/dependabot.yml`:
   ```yaml
@@ -253,7 +253,7 @@ If deploying in containers:
 
 ## Supply Chain Security Checklist
 
-- [ ] Enable Dependabot on GitHub for automatic vulnerability alerts.
+- [x] Enable Dependabot on GitHub for automatic vulnerability alerts.
 - [ ] Generate and commit `webapp/requirements.lock` with hashes.
 - [ ] Configure pip to require hash verification in production deployments.
 - [ ] Add pre-commit hooks for dependency and security scanning.
