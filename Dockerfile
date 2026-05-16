@@ -8,8 +8,10 @@ WORKDIR /app
 COPY webapp/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
-COPY . .
+# Copy necessary application files
+COPY webapp/ webapp/
+COPY scripts/ scripts/
+COPY systems.schema.json .
 
 # Expose the port the app runs on
 EXPOSE 5000
