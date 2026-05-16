@@ -150,10 +150,17 @@ def build_meta(json_path: str, schema_path: str, out_path: str) -> None:
     )
 
 
-def open_db(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=OFF;")
+def open_db(path: str, immutable: bool = False) -> sqlite3.Connection:
+    if immutable:
+        # Use URI mode for immutable database
+        # Note: path must be properly handled if it's already a URI or has special chars,
+        # but for this app's DB_PATH it's usually a simple file path.
+        conn = sqlite3.connect(f"file:{path}?immutable=1", uri=True)
+    else:
+        conn = sqlite3.connect(path)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=OFF;")
+
     conn.execute("PRAGMA temp_store=MEMORY;")
     conn.execute("PRAGMA cache_size = -65536;")  # 64 MB page cache
     conn.execute("PRAGMA mmap_size = 2147483648;")  # 2 GB memory-mapped reads

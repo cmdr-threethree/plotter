@@ -110,7 +110,7 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         )
         self.assertTrue(os.path.exists(self.db_path))
 
-        conn = sqlite3.connect(self.db_path)
+        conn = mod.open_db(self.db_path)
         
         # load meta from DB
         meta = mod.load_meta_from_db(conn)
@@ -240,7 +240,7 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
 
         mod.build_index_prefix(neutron_json, self.db_path, bucket_size=50.0, mark_neutron=True, coord_scale=32)
 
-        conn = sqlite3.connect(self.db_path)
+        conn = mod.open_db(self.db_path)
         meta = mod.load_meta_from_db(conn)
         id_to_prefix = {int(k): v for k, v in meta["prefixes"].items()}
         id_to_star = {int(k): v for k, v in meta["starTypes"].items()}
@@ -280,6 +280,23 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         self.assertIsNone(path_far)
 
         conn.close()
+
+    def test_immutable_mode(self):
+        mod.build_index_prefix(self.json_path, self.db_path, bucket_size=50.0, force=True)
+        self.assertTrue(os.path.exists(self.db_path))
+
+        # Open in immutable mode
+        conn = mod.open_db(self.db_path, immutable=True)
+        try:
+            # Reads should work
+            cur = conn.execute("SELECT COUNT(*) FROM systems")
+            self.assertTrue(cur.fetchone()[0] > 0)
+
+            # Writes should fail
+            with self.assertRaises(sqlite3.OperationalError):
+                conn.execute("INSERT INTO systems (id64) VALUES (999999)")
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

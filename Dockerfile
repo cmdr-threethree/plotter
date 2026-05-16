@@ -17,6 +17,7 @@ EXPOSE 5000
 # Set environment variables for the webapp
 # These point to /app/data so they can be mounted as volumes
 ENV PLOTTER_DB="/app/data/systems.db"
+ENV PLOTTER_DB_IMMUTABLE="true"
 ENV PORT=5000
 
 # Create data directory for persistence

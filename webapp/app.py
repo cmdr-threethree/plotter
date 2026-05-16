@@ -28,13 +28,19 @@ import distance_cli_sqlite_prefix as distance
 
 # Config via env or fall back to defaults in the imported module
 DB_PATH = os.environ.get("PLOTTER_DB", distance.DEFAULT_DB)
+DB_IMMUTABLE = os.environ.get("PLOTTER_DB_IMMUTABLE", "false").lower() == "true"
 BUCKET_SIZE_DEFAULT = 50.0
+
+
+def get_db_conn():
+    return distance.open_db(DB_PATH, immutable=DB_IMMUTABLE)
+
 
 # Load meta and pre-build lookup maps from DB
 try:
     if not os.path.exists(DB_PATH):
         raise FileNotFoundError(f"Database not found: {DB_PATH}")
-    conn = distance.open_db(DB_PATH)
+    conn = get_db_conn()
     META = distance.load_meta_from_db(conn)
     ID_TO_PREFIX = {int(k): v for k, v in META.get("prefixes", {}).items()}
     ID_TO_STAR = {int(k): v for k, v in META.get("starTypes", {}).items()}
@@ -87,8 +93,7 @@ def api_search():
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify([])
-    db = DB_PATH
-    conn = distance.open_db(db)
+    conn = get_db_conn()
     try:
         coord_scale, _ = get_db_params(conn)
         results = distance.get_system_by_query_prefix(
@@ -106,8 +111,7 @@ def api_nearest():
     if not near_q:
         return jsonify({"error": "near required"}), 400
 
-    db = DB_PATH
-    conn = distance.open_db(db)
+    conn = get_db_conn()
     try:
         coord_scale, _ = get_db_params(conn)
         # 1. Resolve near point
@@ -182,10 +186,9 @@ def api_path():
     target_q = body.get("target")
     if not source_q or not target_q:
         return jsonify({"error": "source and target required"}), 400
-    db = DB_PATH
     max_hop = float(body.get("max_hop", 40.0))
 
-    conn = distance.open_db(db)
+    conn = get_db_conn()
     try:
         coord_scale, _ = get_db_params(conn)
         s_list = distance.get_system_by_query_prefix(
@@ -269,7 +272,6 @@ def api_path_stream():
     target_q = request.args.get("target")
     if not source_q or not target_q:
         return jsonify({"error": "source and target required"}), 400
-    db = DB_PATH
     max_hop = float(request.args.get("max_hop", 40.0))
     neutron_highway = request.args.get("neutron_highway", "false").lower() == "true"
 
@@ -277,7 +279,7 @@ def api_path_stream():
     result_q = queue.Queue(maxsize=2)
 
     def worker():
-        conn = distance.open_db(db)
+        conn = get_db_conn()
         try:
             coord_scale, _ = get_db_params(conn)
             s_list = distance.get_system_by_query_prefix(
