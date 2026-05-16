@@ -180,13 +180,19 @@ def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
             z INTEGER,
             star_type_id INTEGER,
             name_suffix TEXT,
-            is_neutron INTEGER DEFAULT 0
+            is_neutron INTEGER DEFAULT 0,
+            needs_permit INTEGER DEFAULT 0
         )
     """
     )
-    # Ensure the is_neutron column exists if the table was created by an older version
+    # Ensure the is_neutron and needs_permit columns exist if the table was created by an older version
     try:
         cur.execute("ALTER TABLE systems ADD COLUMN is_neutron INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+    try:
+        cur.execute("ALTER TABLE systems ADD COLUMN needs_permit INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         # Column already exists
         pass
@@ -206,6 +212,9 @@ def ensure_schema_prefix(conn: sqlite3.Connection) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_star_type ON systems(star_type_id)")
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_systems_neutron ON systems(is_neutron) WHERE is_neutron = 1"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_systems_permit ON systems(needs_permit) WHERE needs_permit = 1"
     )
 
     # New metadata tables
@@ -349,7 +358,7 @@ def build_index_prefix(
     )
     conn.commit()
 
-    insert_sql = "INSERT INTO systems (id64,prefix_id,x,y,z,star_type_id,name_suffix,is_neutron) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id64) DO UPDATE SET is_neutron = MAX(is_neutron, excluded.is_neutron)"
+    insert_sql = "INSERT INTO systems (id64,prefix_id,x,y,z,star_type_id,name_suffix,is_neutron,needs_permit) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id64) DO UPDATE SET is_neutron = MAX(is_neutron, excluded.is_neutron), needs_permit = MAX(needs_permit, excluded.needs_permit)"
     rtree_sql = "INSERT OR IGNORE INTO rtree_systems (id64,min_x,max_x,min_y,max_y,min_z,max_z) VALUES (?,?,?,?,?,?,?)"
 
     batch: List[Tuple] = []
@@ -359,7 +368,7 @@ def build_index_prefix(
     start_time = time.time()
 
     print(
-        f"Starting index build (scale={coord_scale}, resumable). Systems requiring permits are skipped."
+        f"Starting index build (scale={coord_scale}, resumable)."
     )
     for line in iter_lines_from_source(json_path):
         processed += 1
@@ -375,8 +384,6 @@ def build_index_prefix(
             continue
         obj = parse_line_object(line)
         if obj is None:
-            continue
-        if obj.get("needsPermit"):
             continue
         try:
             sid = int(obj["id64"])
@@ -413,8 +420,9 @@ def build_index_prefix(
             iz = int(round(float(coords["z"]) * coord_scale))
 
             is_neutron_val = 1 if mark_neutron else 0
+            needs_permit_val = 1 if obj.get("needsPermit") else 0
 
-            batch.append((sid, prefix_id, ix, iy, iz, star_id, suffix, is_neutron_val))
+            batch.append((sid, prefix_id, ix, iy, iz, star_id, suffix, is_neutron_val, needs_permit_val))
             rtree_batch.append((sid, ix, ix, iy, iy, iz, iz))
         except Exception:
             continue
@@ -464,7 +472,7 @@ def get_system_by_query_prefix(
     try:
         q_int = int(query)
         cur = conn.execute(
-            "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id FROM systems WHERE id64=?",
+            "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,needs_permit FROM systems WHERE id64=?",
             (q_int,),
         )
         row = cur.fetchone()
@@ -479,6 +487,7 @@ def get_system_by_query_prefix(
                     "name": name,
                     "coords": {"x": x, "y": y, "z": z},
                     "mainStar": star,
+                    "needs_permit": bool(row[7]),
                 }
             ]
     except ValueError:
@@ -493,7 +502,7 @@ def get_system_by_query_prefix(
             continue
         suffix = query[len(prefix) :]
         cur = conn.execute(
-            "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id FROM systems WHERE prefix_id=? AND name_suffix=? LIMIT ?",
+            "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,needs_permit FROM systems WHERE prefix_id=? AND name_suffix=? LIMIT ?",
             (pid, suffix, limit),
         )
         for r in cur:
@@ -507,6 +516,7 @@ def get_system_by_query_prefix(
                     "name": name,
                     "coords": {"x": x, "y": y, "z": z},
                     "mainStar": star,
+                    "needs_permit": bool(r[7]),
                 }
             )
             if len(out) >= limit:
@@ -532,7 +542,7 @@ def nearest_neutron(
         min_y, max_y = s_cy - s_dist, s_cy + s_dist
         min_z, max_z = s_cz - s_dist, s_cz + s_dist
         sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
             WHERE r.min_x BETWEEN ? AND ?
@@ -555,6 +565,7 @@ def nearest_neutron(
                 "name": name,
                 "coords": {"x": rx, "y": ry, "z": rz},
                 "mainStar": star,
+                "needs_permit": bool(row[7]),
             }
         if radius > 10000:
             return None
@@ -602,6 +613,8 @@ def neighbors_for_center_prefix(
                     continue
                 if only_neutron and not r.get("is_neutron"):
                     continue
+                if r.get("needs_permit"):
+                    continue
                 x, y, z = (
                     r["x"] / coord_scale,
                     r["y"] / coord_scale,
@@ -625,6 +638,7 @@ def neighbors_for_center_prefix(
                                 "coords": {"x": x, "y": y, "z": z},
                                 "mainStar": star,
                                 "star_type_id": star_id,
+                                "needs_permit": bool(r.get("needs_permit")),
                             },
                         )
                     )
@@ -633,12 +647,13 @@ def neighbors_for_center_prefix(
     else:
         # R-tree range query
         sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
             WHERE r.min_x BETWEEN ? AND ?
               AND r.min_y BETWEEN ? AND ?
               AND r.min_z BETWEEN ? AND ?
+              AND s.needs_permit = 0
         """
         if only_neutron:
             sql += " AND s.is_neutron = 1"
@@ -668,6 +683,7 @@ def neighbors_for_center_prefix(
                             "coords": {"x": x, "y": y, "z": z},
                             "mainStar": star,
                             "star_type_id": star_id,
+                            "needs_permit": bool(r[7]),
                         },
                     )
                 )
@@ -1228,7 +1244,7 @@ def nearest_system(
         min_y, max_y = s_cy - s_dist, s_cy + s_dist
         min_z, max_z = s_cz - s_dist, s_cz + s_dist
         sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
             WHERE r.min_x BETWEEN ? AND ?
@@ -1250,6 +1266,7 @@ def nearest_system(
                 "name": name,
                 "coords": {"x": rx, "y": ry, "z": rz},
                 "mainStar": star,
+                "needs_permit": bool(row[7]),
             }
         if radius > 10000:
             return None
@@ -1280,7 +1297,7 @@ def nearest_of_type(
         min_z, max_z = s_cz - s_dist, s_cz + s_dist
 
         sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
             WHERE r.min_x BETWEEN ? AND ?
@@ -1325,6 +1342,7 @@ def nearest_of_type(
                 "y": best[4],
                 "z": best[5],
                 "star_type_id": best[6],
+                "needs_permit": bool(best[7]),
                 "dist": math.sqrt(best_d2),
             }
 
@@ -1649,7 +1667,7 @@ def main():
         # We need to unscale coords if we store them in in_memory_buckets, or handle it in neighbors_for_center_prefix
         # Let's keep the scaled values in the bucket list and have neighbors_for_center_prefix unscale them.
         sql = """
-            SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,is_neutron
+            SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,is_neutron,needs_permit
             FROM systems 
             WHERE (x/?) BETWEEN ? AND ? 
               AND (y/?) BETWEEN ? AND ? 
@@ -1675,6 +1693,7 @@ def main():
                 "z": r[5],
                 "star_type_id": r[6],
                 "is_neutron": r[7],
+                "needs_permit": r[8],
             }
             in_memory_buckets.setdefault((bx_i, by_i, bz_i), []).append(rec)
 

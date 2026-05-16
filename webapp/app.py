@@ -173,6 +173,7 @@ def api_nearest():
                 },
                 "dist": round(res["dist"], 1),
                 "mainStar": ID_TO_STAR.get(res["star_type_id"], ""),
+                "needs_permit": res.get("needs_permit", False),
             }
         )
     finally:
@@ -240,6 +241,7 @@ def api_path():
                     "coords": coords,
                     "mainStar": p.get("mainStar"),
                     "hop_dist": round(hop_dist, 1),
+                    "needs_permit": p.get("needs_permit", False),
                 }
             )
             prev = coords
@@ -349,6 +351,7 @@ def api_path_stream():
                         "coords": coords,
                         "mainStar": p.get("mainStar"),
                         "hop_dist": round(hop_dist, 1),
+                        "needs_permit": p.get("needs_permit", False),
                     }
                 )
                 prev = coords

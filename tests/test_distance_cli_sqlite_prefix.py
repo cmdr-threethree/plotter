@@ -132,10 +132,10 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
         id_to_prefix = {int(k): v for k, v in meta.get("prefixes", {}).items()}
         id_to_star = {int(k): v for k, v in meta.get("starTypes", {}).items()}
 
-        # compute expected rows by reading the json and counting non-permit entries
+        # compute expected rows by reading the json
         with open(self.json_path, "r", encoding="utf-8") as f:
             systems = json.load(f)
-        expected_rows = sum(1 for s in systems if not s.get("needsPermit"))
+        expected_rows = len(systems)
         self.assertEqual(count, expected_rows)
 
         # Choose two non-permit systems from the JSON for lookup/path tests
@@ -297,6 +297,70 @@ class TestDistanceCliSqlitePrefix(unittest.TestCase):
                 conn.execute("INSERT INTO systems (id64) VALUES (999999)")
         finally:
             conn.close()
+
+    def test_permit_system_routing(self):
+        # Setup systems:
+        # A(0,0,0) - No permit
+        # P(50,0,0) - NEEDS permit
+        # C(50,10,0) - No permit
+        # B(100,0,0) - No permit
+        # Max hop 60.
+        # A -> B should use C, not P.
+        # A -> P should work.
+        # P -> B should work.
+        systems = [
+            {"id64": 100, "name": "A", "coords": {"x": 0, "y": 0, "z": 0}, "needsPermit": False},
+            {"id64": 101, "name": "P", "coords": {"x": 50, "y": 0, "z": 0}, "needsPermit": True},
+            {"id64": 102, "name": "C", "coords": {"x": 50, "y": 10, "z": 0}, "needsPermit": False},
+            {"id64": 103, "name": "B", "coords": {"x": 100, "y": 0, "z": 0}, "needsPermit": False},
+        ]
+        json_path = os.path.join(self.tmpdir.name, "permit_test.json")
+        with open(json_path, "w") as f:
+            f.write("[\n")
+            for i, s in enumerate(systems):
+                f.write(json.dumps(s))
+                if i < len(systems) - 1:
+                    f.write(",\n")
+                else:
+                    f.write("\n")
+            f.write("]\n")
+
+        mod.build_index_prefix(json_path, self.db_path, bucket_size=50.0, force=True, coord_scale=32)
+        conn = mod.open_db(self.db_path)
+        meta = mod.load_meta_from_db(conn)
+        id_to_prefix = {int(k): v for k, v in meta["prefixes"].items()}
+        id_to_star = {int(k): v for k, v in meta["starTypes"].items()}
+        coord_scale = 32
+
+        def get_sys(name):
+            return mod.get_system_by_query_prefix(conn, name, meta, id_to_prefix, id_to_star, coord_scale)[0]
+
+        sA = get_sys("A")
+        sP = get_sys("P")
+        sC = get_sys("C")
+        sB = get_sys("B")
+
+        # 1. A -> B should avoid P and use C
+        path = mod.find_path_robust(conn, sA, sB, max_hop=60.0, coord_scale=coord_scale,
+                                   id_to_prefix=id_to_prefix, id_to_star=id_to_star)
+        self.assertIsNotNone(path)
+        ids = [p["id64"] for p in path]
+        self.assertIn(102, ids) # Should use C
+        self.assertNotIn(101, ids[1:-1]) # Should NOT use P as intermediate
+
+        # 2. A -> P should work (Target is permit system)
+        path_to_p = mod.find_path_robust(conn, sA, sP, max_hop=60.0, coord_scale=coord_scale,
+                                        id_to_prefix=id_to_prefix, id_to_star=id_to_star)
+        self.assertIsNotNone(path_to_p)
+        self.assertEqual(path_to_p[-1]["id64"], 101)
+
+        # 3. P -> B should work (Source is permit system)
+        path_from_p = mod.find_path_robust(conn, sP, sB, max_hop=60.0, coord_scale=coord_scale,
+                                          id_to_prefix=id_to_prefix, id_to_star=id_to_star)
+        self.assertIsNotNone(path_from_p)
+        self.assertEqual(path_from_p[0]["id64"], 101)
+
+        conn.close()
 
 
 if __name__ == "__main__":
