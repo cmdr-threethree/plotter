@@ -14,16 +14,16 @@ COPY scripts/ scripts/
 COPY systems.schema.json .
 
 # Expose the port the app runs on
-EXPOSE 5000
+EXPOSE 80
 
 # Set environment variables for the webapp
 # These point to /app/data so they can be mounted as volumes
 ENV PLOTTER_DB="/app/data/systems.db"
 ENV PLOTTER_DB_IMMUTABLE="true"
-ENV PORT=5000
+ENV PORT=80
 
 # Create data directory for persistence
 RUN mkdir -p /app/data
 
 # Default command runs the web application using Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "8", "--worker-tmp-dir", "/dev/shm", "--access-logfile", "-", "--error-logfile", "-", "webapp.app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "1", "--threads", "8", "--worker-tmp-dir", "/dev/shm", "--access-logfile", "-", "--error-logfile", "-", "webapp.app:app"]
