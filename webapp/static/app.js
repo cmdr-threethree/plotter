@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 let searchController = null;
 
 async function search(q) {
-  if (!q || q.length < 2) return [];
+  if (!q || q.length < 3) return [];
 
   // Cancel any pending search
   if (searchController) {
@@ -29,7 +29,7 @@ function renderSuggestions(container, items) {
   if (!items || items.length === 0) {
     // show explicit no-matches message when user typed something
     const input = container.previousElementSibling;
-    if (input && input.value && input.value.trim().length >= 2) {
+    if (input && input.value && input.value.trim().length >= 3) {
       const no = document.createElement("div");
       no.className = "suggest";
       no.style.opacity = "0.7";
@@ -68,7 +68,7 @@ function setupSuggestionInput(inputId, suggestionId, checkCoords = false) {
       const items = await search(v);
       if (items === null) return; // Stale request, do nothing
       renderSuggestions($(suggestionId), items);
-    }, 300);
+    }, 500);
   });
 }
 
@@ -164,23 +164,6 @@ $('find').addEventListener('click', async ()=>{
   if(!source || !target){
     $('info').textContent = 'Enter both source and target';
     return;
-  }
-  // quick pre-check: ensure source/target resolve to at least one system
-  try{
-    const [sres, tres] = await Promise.all([search(source), search(target)]);
-    if(!sres || sres.length === 0){
-      $('info').textContent = `Source not found: ${source}`;
-      return;
-    }
-    if(!tres || tres.length === 0){
-      $('info').textContent = `Target not found: ${target}`;
-      return;
-    }
-    // Update params with resolved names for cleaner storage
-    currentParams.source = sres[0].name;
-    currentParams.target = tres[0].name;
-  }catch(e){
-    // ignore
   }
 
   $('info').textContent = 'Searching...';
