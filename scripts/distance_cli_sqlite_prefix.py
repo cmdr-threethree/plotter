@@ -1821,6 +1821,8 @@ def main():
             f" {i}) {p['name']} id64={p['id64']} coords=({c['x']},{c['y']},{c['z']}) mainStar={p.get('mainStar')} hop_dist={hop_dist:.1f}",
             end="",
         )
+        if p.get('needs_permit'):
+            print(f" [PERMIT LOCKED]", end="")
         if "_relaxed_hop" in p:
             print(f" [RELAXED: {p['_relaxed_hop']:.1f}]", end="")
         print()

@@ -96,6 +96,11 @@ function renderPath(data, maxHop) {
     li.appendChild(strong);
     const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) ${p.mainStar || ''} hop=${p.hop_dist.toFixed(1)} `);
     li.appendChild(meta);
+    if(p.needs_permit){
+      const warn = document.createElement('strong');
+      warn.textContent = ' [Permit locked]';
+      li.appendChild(warn);
+    }
     if(p.hop_dist > maxHop){
       const warn = document.createElement('strong');
       warn.textContent = ' [Exceeds max hop]';
