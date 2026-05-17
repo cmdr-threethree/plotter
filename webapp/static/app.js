@@ -1,67 +1,80 @@
 const $ = (id) => document.getElementById(id);
 
-async function search(q){
-  if(!q) return [];
-  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-  if(!res.ok) return [];
-  return await res.json();
+let searchController = null;
+
+async function search(q) {
+  if (!q || q.length < 2) return [];
+
+  // Cancel any pending search
+  if (searchController) {
+    searchController.abort();
+  }
+  searchController = new AbortController();
+
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+      signal: searchController.signal,
+    });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (err) {
+    if (err.name === "AbortError") return null; // Request was cancelled
+    console.error("Search error:", err);
+    return [];
+  }
 }
 
-function renderSuggestions(container, items){
-  container.innerHTML = '';
-  if(!items || items.length === 0){
+function renderSuggestions(container, items) {
+  container.innerHTML = "";
+  if (!items || items.length === 0) {
     // show explicit no-matches message when user typed something
     const input = container.previousElementSibling;
-    if (input && input.value && input.value.trim() !== ''){
-      const no = document.createElement('div');
-      no.className = 'suggest';
-      no.style.opacity = '0.7';
-      no.textContent = 'No matches';
+    if (input && input.value && input.value.trim().length >= 2) {
+      const no = document.createElement("div");
+      no.className = "suggest";
+      no.style.opacity = "0.7";
+      no.textContent = "No matches";
       container.appendChild(no);
     }
     return;
   }
-  items.slice(0,5).forEach(it => {
-    const div = document.createElement('div');
-    div.className = 'suggest';
+  items.slice(0, 5).forEach((it) => {
+    const div = document.createElement("div");
+    div.className = "suggest";
     div.textContent = `${it.name} (${it.id64})`;
-    div.addEventListener('click', ()=>{
+    div.addEventListener("click", () => {
       const input = container.previousElementSibling;
       input.value = it.name;
-      container.innerHTML = '';
+      container.innerHTML = "";
     });
     container.appendChild(div);
   });
 }
 
-let srcTimer = null, tgtTimer = null;
-$('source').addEventListener('input', (e)=>{
-  clearTimeout(srcTimer);
-  const v = e.target.value;
-  srcTimer = setTimeout(async ()=>{
-    const items = await search(v);
-    renderSuggestions($('src-suggestions'), items);
-  }, 200);
-});
-$('target').addEventListener('input', (e)=>{
-  clearTimeout(tgtTimer);
-  const v = e.target.value;
-  tgtTimer = setTimeout(async ()=>{
-    const items = await search(v);
-    renderSuggestions($('tgt-suggestions'), items);
-  }, 200);
-});
+function setupSuggestionInput(inputId, suggestionId, checkCoords = false) {
+  let timer = null;
+  $(inputId).addEventListener("input", (e) => {
+    clearTimeout(timer);
+    const v = e.target.value.trim();
+    if (checkCoords && v.includes(",")) {
+      $(suggestionId).innerHTML = "";
+      return;
+    }
+    timer = setTimeout(async () => {
+      if (v.length < 2) {
+        $(suggestionId).innerHTML = "";
+        return;
+      }
+      const items = await search(v);
+      if (items === null) return; // Stale request, do nothing
+      renderSuggestions($(suggestionId), items);
+    }, 300);
+  });
+}
 
-let nearTimer = null;
-$('near').addEventListener('input', (e)=>{
-  clearTimeout(nearTimer);
-  const v = e.target.value;
-  if (v.includes(',')) return; // Don't suggest for coordinates
-  nearTimer = setTimeout(async ()=>{
-    const items = await search(v);
-    renderSuggestions($('near-suggestions'), items);
-  }, 200);
-});
+setupSuggestionInput("source", "src-suggestions");
+setupSuggestionInput("target", "tgt-suggestions");
+setupSuggestionInput("near", "near-suggestions", true);
 
 $('reverse').addEventListener('click', ()=>{
   const s = $('source').value;
