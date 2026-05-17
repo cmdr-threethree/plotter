@@ -34,13 +34,14 @@ Reclaims fragmentation and optimizes file layout.
 **Status:** IMPLEMENTED.  
 Queries once for all candidates within `max_hop`, then picks the best. No more doubling radius loops.
 
-### 2.2 id_to_prefix / id_to_star dicts pre-built
+### 2.2 Lazy Metadata Loading (JOIN-based resolution)
 **Status:** IMPLEMENTED.  
-Built once in `main()` or webapp startup and passed as arguments.
+Massive prefix maps (millions of rows) are no longer kept in RAM. Names and star types are resolved via SQL JOINs or on-demand prefix matching.  
+**Impact:** ~500MB+ RAM saved at scale (5M prefixes).
 
-### 2.3 LRU-limited cache
+### 2.3 functools.lru_cache
 **Status:** IMPLEMENTED.  
-`_manual_cache` uses `collections.OrderedDict` with a 2048-item LRU limit.
+Replaced manual OrderedDict cache with Python's built-in `lru_cache` for better performance and thread safety.
 
 ### 2.4 nearest-type with R-tree expanding radius
 **Status:** IMPLEMENTED.  
@@ -54,12 +55,29 @@ Added `cache_size`, `mmap_size`, `journal_mode=WAL`, etc., to `open_db()`.
 
 ---
 
-## 4. Priority Order for Implementation
+## 4. Web Application Optimizations (IMPLEMENTED)
 
-All items from the roadmap have been implemented, including the structural changes (R-tree, scaled coordinates).
+### 4.1 Persistent Database Connection
+**Status:** IMPLEMENTED.  
+Initializes a global connection with `check_same_thread=False` during startup.  
+**Impact:** Zero per-request file opening and PRAGMA overhead.
+
+### 4.2 Server-Side Result Caching
+**Status:** IMPLEMENTED.  
+Uses `functools.lru_cache` for search results and prefix lookups.
+
+### 4.3 Client-Side Debouncing and Cancellation
+**Status:** IMPLEMENTED.  
+300ms debounce and AbortController-based request cancellation in `app.js`.
 
 ---
 
-## 5. Optional: NumPy for bulk distance computation
+## 5. Priority Order for Implementation
+
+All items from the roadmap have been implemented, including the structural changes (R-tree, scaled coordinates) and high-scale metadata optimizations.
+
+---
+
+## 6. Optional: NumPy for bulk distance computation
 **Status:** DEFERRED.  
 Optional optimization for very high-volume preloaded datasets. Not required for current performance targets.
