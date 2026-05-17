@@ -150,14 +150,18 @@ def build_meta(json_path: str, schema_path: str, out_path: str) -> None:
     )
 
 
-def open_db(path: str, immutable: bool = False) -> sqlite3.Connection:
+def open_db(
+    path: str, immutable: bool = False, check_same_thread: bool = True
+) -> sqlite3.Connection:
     if immutable:
         # Use URI mode for immutable database
         # Note: path must be properly handled if it's already a URI or has special chars,
         # but for this app's DB_PATH it's usually a simple file path.
-        conn = sqlite3.connect(f"file:{path}?immutable=1", uri=True)
+        conn = sqlite3.connect(
+            f"file:{path}?immutable=1", uri=True, check_same_thread=check_same_thread
+        )
     else:
-        conn = sqlite3.connect(path)
+        conn = sqlite3.connect(path, check_same_thread=check_same_thread)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=OFF;")
 
@@ -456,29 +460,35 @@ def build_index_prefix(
 def get_system_by_query_prefix(
     conn: sqlite3.Connection,
     query: str,
-    meta: Dict,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
-    coord_scale: int,
+    meta: Optional[Dict] = None,
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
+    coord_scale: int = 1,
     limit: int = 10,
 ) -> List[Dict]:
     """Find systems by id64 or exact full-name match (prefix + name_suffix).
 
-    Assumes the current prefix-compressed DB schema (prefix_id + name_suffix). Exact matches only — no LIKE or partial matching.
+    Assumes the current prefix-compressed DB schema (prefix_id + name_suffix).
+    Uses on-demand prefix matching to avoid loading all prefixes into memory.
     """
-    prefixes = meta.get("prefixes", {})
-
-    # Try id lookup first
-    try:
+    # Try id lookup if query is a pure number
+    if query.isdigit():
         q_int = int(query)
         cur = conn.execute(
-            "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,needs_permit FROM systems WHERE id64=?",
+            """
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, st.type_name, p.prefix, s.needs_permit
+            FROM systems s
+            LEFT JOIN star_types st ON st.id = s.star_type_id
+            LEFT JOIN prefixes p ON p.id = s.prefix_id
+            WHERE s.id64=?
+            """,
             (q_int,),
         )
         row = cur.fetchone()
         if row:
-            name = id_to_prefix.get(row[1], "") + (row[2] or "")
-            star = id_to_star.get(row[6], "") if len(row) > 6 else ""
+            # name = prefix + suffix
+            name = (row[7] or "") + (row[2] or "")
+            star = row[6] or ""
             # Unscale coordinates
             x, y, z = row[3] / coord_scale, row[4] / coord_scale, row[5] / coord_scale
             return [
@@ -487,40 +497,54 @@ def get_system_by_query_prefix(
                     "name": name,
                     "coords": {"x": x, "y": y, "z": z},
                     "mainStar": star,
-                    "needs_permit": bool(row[7]),
+                    "needs_permit": bool(row[8]),
                 }
             ]
-    except ValueError:
-        pass
 
-    # Exact full-name match: try prefixes that are a prefix of the query, longest first
-    items = sorted(prefixes.items(), key=lambda kv: len(kv[1] or ""), reverse=True)
+    # Exact full-name match logic:
+    # Generate candidate prefixes from the query (all prefixes of the query string)
+    # Longest first to prefer more specific prefixes.
+    candidates = [query[:i] for i in range(len(query), 0, -1)]
+
+    # Lookup these candidates in the prefixes table
+    placeholders = ",".join("?" for _ in candidates)
+    prefix_rows = conn.execute(
+        f"SELECT id, prefix FROM prefixes WHERE prefix IN ({placeholders})",
+        tuple(candidates),
+    ).fetchall()
+
+    # Sort by prefix length descending
+    prefix_rows.sort(key=lambda r: len(r[1]), reverse=True)
+
     out: List[Dict] = []
-    for pid_str, prefix in items:
-        pid = int(pid_str)
-        if not query.startswith(prefix):
-            continue
-        suffix = query[len(prefix) :]
+    for pid, prefix_str in prefix_rows:
+        suffix = query[len(prefix_str) :]
+        # Query systems with this prefix_id and name_suffix
         cur = conn.execute(
-            "SELECT id64,prefix_id,name_suffix,x,y,z,star_type_id,needs_permit FROM systems WHERE prefix_id=? AND name_suffix=? LIMIT ?",
-            (pid, suffix, limit),
+            """
+            SELECT s.id64, s.x, s.y, s.z, st.type_name, s.needs_permit
+            FROM systems s
+            LEFT JOIN star_types st ON st.id = s.star_type_id
+            WHERE s.prefix_id=? AND s.name_suffix=?
+            LIMIT ?
+            """,
+            (pid, suffix, limit - len(out)),
         )
         for r in cur:
-            name = prefix + (r[2] or "")
-            star = id_to_star.get(r[6], "")
             # Unscale coordinates
-            x, y, z = r[3] / coord_scale, r[4] / coord_scale, r[5] / coord_scale
+            x, y, z = r[1] / coord_scale, r[2] / coord_scale, r[3] / coord_scale
             out.append(
                 {
                     "id64": r[0],
-                    "name": name,
+                    "name": query,  # Since it's an exact match of prefix + suffix
                     "coords": {"x": x, "y": y, "z": z},
-                    "mainStar": star,
-                    "needs_permit": bool(r[7]),
+                    "mainStar": r[4] or "",
+                    "needs_permit": bool(r[5]),
                 }
             )
             if len(out) >= limit:
                 return out
+
     return out
 
 
@@ -528,8 +552,8 @@ def nearest_neutron(
     conn: sqlite3.Connection,
     near_coords: Dict,
     coord_scale: int,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
     initial_radius: float = 50.0,
 ) -> Optional[Dict]:
     """Find the nearest neutron star to given coordinates using expanding radius R-tree search."""
@@ -542,9 +566,11 @@ def nearest_neutron(
         min_y, max_y = s_cy - s_dist, s_cy + s_dist
         min_z, max_z = s_cz - s_dist, s_cz + s_dist
         sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, st.type_name, p.prefix, s.needs_permit
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
+            LEFT JOIN star_types st ON st.id = s.star_type_id
+            LEFT JOIN prefixes p ON p.id = s.prefix_id
             WHERE r.min_x BETWEEN ? AND ?
               AND r.min_y BETWEEN ? AND ?
               AND r.min_z BETWEEN ? AND ?
@@ -558,14 +584,14 @@ def nearest_neutron(
                 row[4] / coord_scale,
                 row[5] / coord_scale,
             )
-            name = id_to_prefix.get(row[1], "") + (row[2] or "")
-            star = id_to_star.get(row[6], "")
+            name = (row[7] or "") + (row[2] or "")
+            star = row[6] or ""
             return {
                 "id64": row[0],
                 "name": name,
                 "coords": {"x": rx, "y": ry, "z": rz},
                 "mainStar": star,
-                "needs_permit": bool(row[7]),
+                "needs_permit": bool(row[8]),
             }
         if radius > 10000:
             return None
@@ -578,8 +604,8 @@ def neighbors_for_center_prefix(
     max_distance: float,
     visited: Set[int],
     coord_scale: int,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
     max_neighbors: int = 500,
     allowed_star_ids: Optional[Set[int]] = None,
     in_memory_buckets: Optional[Dict[Tuple[int, int, int], List[Dict]]] = None,
@@ -625,10 +651,13 @@ def neighbors_for_center_prefix(
                 dz = z - cz
                 d2 = dx * dx + dy * dy + dz * dz
                 if d2 <= max_d2:
-                    name = id_to_prefix.get(r.get("prefix_id"), "") + (
-                        r.get("name_suffix") or ""
-                    )
-                    star = id_to_star.get(star_id, "")
+                    if id_to_prefix is not None:
+                        name = id_to_prefix.get(r.get("prefix_id"), "") + (
+                            r.get("name_suffix") or ""
+                        )
+                    else:
+                        name = "" # Fallback
+                    star = id_to_star.get(star_id, "") if id_to_star else ""
                     out.append(
                         (
                             d2,
@@ -646,15 +675,31 @@ def neighbors_for_center_prefix(
         candidates = [t[1] for t in out[:max_neighbors]]
     else:
         # R-tree range query
-        sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
-            FROM rtree_systems r
-            JOIN systems s ON s.id64 = r.id64
-            WHERE r.min_x BETWEEN ? AND ?
-              AND r.min_y BETWEEN ? AND ?
-              AND r.min_z BETWEEN ? AND ?
-              AND s.needs_permit = 0
-        """
+        if id_to_prefix is not None and id_to_star is not None:
+            # Fast path with in-memory metadata
+            sql = """
+                SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
+                FROM rtree_systems r
+                JOIN systems s ON s.id64 = r.id64
+                WHERE r.min_x BETWEEN ? AND ?
+                  AND r.min_y BETWEEN ? AND ?
+                  AND r.min_z BETWEEN ? AND ?
+                  AND s.needs_permit = 0
+            """
+        else:
+            # Lazy path with JOINs
+            sql = """
+                SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, st.type_name, p.prefix, s.needs_permit
+                FROM rtree_systems r
+                JOIN systems s ON s.id64 = r.id64
+                LEFT JOIN star_types st ON st.id = s.star_type_id
+                LEFT JOIN prefixes p ON p.id = s.prefix_id
+                WHERE r.min_x BETWEEN ? AND ?
+                  AND r.min_y BETWEEN ? AND ?
+                  AND r.min_z BETWEEN ? AND ?
+                  AND s.needs_permit = 0
+            """
+
         if only_neutron:
             sql += " AND s.is_neutron = 1"
 
@@ -662,7 +707,17 @@ def neighbors_for_center_prefix(
         out: List[Tuple[float, Dict]] = []
         for r in cur:
             sid = r[0]
-            star_id = r[6]
+            if id_to_prefix is not None and id_to_star is not None:
+                star_id = r[6]
+                needs_permit = bool(r[7])
+                name = id_to_prefix.get(r[1], "") + (r[2] or "")
+                star = id_to_star.get(star_id, "")
+            else:
+                star_id = r[6]  # In the JOIN query, r[6] is type_name
+                needs_permit = bool(r[8])
+                name = (r[7] or "") + (r[2] or "")
+                star = r[6] or ""
+
             if allowed_star_ids and star_id not in allowed_star_ids:
                 continue
             # Unscale coordinates
@@ -672,8 +727,6 @@ def neighbors_for_center_prefix(
             dz = z - cz
             d2 = dx * dx + dy * dy + dz * dz
             if d2 <= max_d2:
-                name = id_to_prefix.get(r[1], "") + (r[2] or "")
-                star = id_to_star.get(star_id, "")
                 out.append(
                     (
                         d2,
@@ -682,8 +735,8 @@ def neighbors_for_center_prefix(
                             "name": name,
                             "coords": {"x": x, "y": y, "z": z},
                             "mainStar": star,
-                            "star_type_id": star_id,
-                            "needs_permit": bool(r[7]),
+                            "star_type_id": star_id if isinstance(star_id, int) else None,
+                            "needs_permit": needs_permit,
                         },
                     )
                 )
@@ -709,8 +762,8 @@ def find_path_directional(
     target: Dict,
     max_hop: float,
     coord_scale: int,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
     max_nodes: int = 5000,
     max_neighbors: int = 500,
     allowed_star_ids: Optional[Set[int]] = None,
@@ -903,8 +956,8 @@ def _find_path_robust_single(
     target: Dict,
     max_hop: float,
     coord_scale: int,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
     max_nodes: int = 5000,
     max_neighbors: int = 500,
     allowed_star_ids: Optional[Set[int]] = None,
@@ -1060,8 +1113,8 @@ def find_path_robust(
     target: Dict,
     max_hop: float,
     coord_scale: int,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
     max_nodes: int = 5000,
     max_neighbors: int = 500,
     allowed_star_ids: Optional[Set[int]] = None,
@@ -1162,8 +1215,8 @@ def find_path_neutron_highway(
     target: Dict,
     max_hop: float,
     coord_scale: int,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
     max_nodes: int = 5000,
     max_neighbors: int = 500,
     allowed_star_ids: Optional[Set[int]] = None,
@@ -1230,8 +1283,8 @@ def nearest_system(
     conn: sqlite3.Connection,
     near_coords: Dict,
     coord_scale: int,
-    id_to_prefix: Dict[int, str],
-    id_to_star: Dict[int, str],
+    id_to_prefix: Optional[Dict[int, str]] = None,
+    id_to_star: Optional[Dict[int, str]] = None,
     initial_radius: float = 50.0,
 ) -> Optional[Dict]:
     """Find the nearest system to given coordinates using expanding radius R-tree search."""
@@ -1244,9 +1297,11 @@ def nearest_system(
         min_y, max_y = s_cy - s_dist, s_cy + s_dist
         min_z, max_z = s_cz - s_dist, s_cz + s_dist
         sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, st.type_name, p.prefix, s.needs_permit
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
+            LEFT JOIN star_types st ON st.id = s.star_type_id
+            LEFT JOIN prefixes p ON p.id = s.prefix_id
             WHERE r.min_x BETWEEN ? AND ?
               AND r.min_y BETWEEN ? AND ?
               AND r.min_z BETWEEN ? AND ?
@@ -1259,14 +1314,14 @@ def nearest_system(
                 row[4] / coord_scale,
                 row[5] / coord_scale,
             )
-            name = id_to_prefix.get(row[1], "") + (row[2] or "")
-            star = id_to_star.get(row[6], "")
+            name = (row[7] or "") + (row[2] or "")
+            star = row[6] or ""
             return {
                 "id64": row[0],
                 "name": name,
                 "coords": {"x": rx, "y": ry, "z": rz},
                 "mainStar": star,
-                "needs_permit": bool(row[7]),
+                "needs_permit": bool(row[8]),
             }
         if radius > 10000:
             return None
@@ -1297,9 +1352,11 @@ def nearest_of_type(
         min_z, max_z = s_cz - s_dist, s_cz + s_dist
 
         sql = """
-            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, s.star_type_id, s.needs_permit
+            SELECT s.id64, s.prefix_id, s.name_suffix, s.x, s.y, s.z, st.type_name, p.prefix, s.needs_permit
             FROM rtree_systems r
             JOIN systems s ON s.id64 = r.id64
+            LEFT JOIN star_types st ON st.id = s.star_type_id
+            LEFT JOIN prefixes p ON p.id = s.prefix_id
             WHERE r.min_x BETWEEN ? AND ?
               AND r.min_y BETWEEN ? AND ?
               AND r.min_z BETWEEN ? AND ?
@@ -1334,15 +1391,16 @@ def nearest_of_type(
                     best_d2 = d2
 
         if best:
+            # Unscale coordinates for the returned object
+            rx, ry, rz = best[3] / coord_scale, best[4] / coord_scale, best[5] / coord_scale
+            name = (best[7] or "") + (best[2] or "")
+            star = best[6] or ""
             return {
                 "id64": best[0],
-                "prefix_id": best[1],
-                "name_suffix": best[2],
-                "x": best[3],
-                "y": best[4],
-                "z": best[5],
-                "star_type_id": best[6],
-                "needs_permit": bool(best[7]),
+                "name": name,
+                "coords": {"x": rx, "y": ry, "z": rz},
+                "mainStar": star,
+                "needs_permit": bool(best[8]),
                 "dist": math.sqrt(best_d2),
             }
 
