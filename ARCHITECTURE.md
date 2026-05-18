@@ -31,8 +31,9 @@ The SQLite database will become self-describing by including dedicated metadata 
 
 ### 2.3 Web Application Simplification
 - Remove `PLOTTER_META` environment variable requirement.
-- On startup, the web application will query the `prefixes` and `star_types` tables to build its internal lookup maps.
-- **Note**: Backward compatibility for `meta.json` will not be maintained in the web layer to keep the code clean and focused.
+- On startup, the web application queries the `db_meta` table for scaling and bucket parameters.
+- **Lazy Metadata Resolution**: Prefix and star type names are resolved from the database on-demand (or via JOINs) rather than being fully loaded into RAM on startup. This significantly reduces the memory footprint for large datasets.
+- **Note**: Backward compatibility for `meta.json` is not maintained in the web layer to keep the code clean and focused.
 
 ## 3. Implementation Plan [COMPLETED]
 

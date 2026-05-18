@@ -72,9 +72,13 @@ The SQL query building in `scripts/distance_cli_sqlite_prefix.py` uses an f-stri
 ### Database Permissions
 **Risk:** The SQLite database file is stored on disk with default OS permissions. Unauthorized users on the same machine could read or modify it.
 
+**Status:** **Mitigated by Design**
+- The database is included in the container image and opened in `immutable` mode.
+- Azure App Service deployment limits "same machine" access to the container boundary.
+
 **Recommendation:**
-- Restrict file permissions to the application user (e.g., `chmod 600 data/systems.db`).
-- Use a more robust database (PostgreSQL, etc.) for multi-user environments with per-table ACLs.
+- Restrict file permissions to the application user (e.g., `chmod 644 data/systems.db`) during image build.
+- Continue using `immutable=True` for database connections.
 
 ### No Logging or Monitoring
 **Risk:** Attacks, abuse, and errors are not recorded. Cannot detect anomalies or investigate incidents.
@@ -83,7 +87,7 @@ The SQL query building in `scripts/distance_cli_sqlite_prefix.py` uses an f-stri
 - Enable application logging to capture API requests, errors, and timings.
 - Log all search/pathfinding requests with client IP, parameters, and duration.
 - Set up alerts for high error rates or unusually long requests.
-- Consider using a structured logging library (e.g., Python's `logging` with JSON output).
+- Use Azure App Service's built-in log streaming and Application Insights.
 
 ---
 
@@ -98,8 +102,8 @@ The project currently uses **minimal, well-maintained dependencies**:
 
 **Current practices:**
 - ✅ Exact version pinning in `webapp/requirements.txt`
+- ✅ Automated vulnerability scanning (Dependabot)
 - ❌ No hash verification or lock files
-- ❌ No automated vulnerability scanning
 - ❌ No SBOM (Software Bill of Materials)
 
 ### Recommended Controls
@@ -117,20 +121,7 @@ pip install --require-hashes -r webapp/requirements.lock
 ```
 
 #### 2. Automated Vulnerability Scanning ✅ DONE
-Enable GitHub's **Dependabot** to scan for vulnerable dependencies:
-- Create `.github/dependabot.yml`:
-  ```yaml
-  version: 2
-  updates:
-    - package-ecosystem: "pip"
-      directory: "/webapp"
-      schedule:
-        interval: "weekly"
-      open-pull-requests-limit: 5
-      reviewers:
-        - cmdr-threethree
-  ```
-- GitHub will automatically create PRs for security updates.
+GitHub's **Dependabot** is enabled to scan for vulnerable dependencies and automatically create PRs for security updates.
 
 #### 3. Regular Dependency Audits
 Run security audits regularly during development:
@@ -173,18 +164,7 @@ If distributing releases/containers:
 - Publish signatures and public keys in release notes
 
 #### 3. CI/CD Security
-Add to GitHub Actions workflow:
-```yaml
-- name: Run dependency audit
-  run: |
-    pip install safety
-    safety check -r webapp/requirements.txt
-
-- name: Run SAST scanning
-  run: |
-    pip install bandit
-    bandit -r scripts/ webapp/ -f json -o bandit-report.json
-```
+**Status:** **Not relevant** (User does not use GitHub workflows yet).
 
 ### Developer Environment
 
@@ -257,7 +237,7 @@ If deploying in containers:
 - [ ] Generate and commit `webapp/requirements.lock` with hashes.
 - [ ] Configure pip to require hash verification in production deployments.
 - [ ] Add pre-commit hooks for dependency and security scanning.
-- [ ] Run `pip-audit` and `safety check` in CI/CD pipeline.
+- [ ] Run `pip-audit` and `safety check` (Not currently relevant - no custom CI/CD pipeline).
 - [ ] Require signed commits from all contributors on main branch.
 - [ ] Document dependency rationale (why each package is necessary).
 - [ ] Audit transitive dependencies monthly.
@@ -274,7 +254,7 @@ For production deployments, follow these steps:
 
 - [ ] Use a production WSGI server (e.g., Gunicorn, uWSGI) instead of Flask's built-in server.
 - [ ] Set `DEBUG=false` environment variable.
-- [ ] Deploy behind an HTTPS reverse proxy (Nginx, Apache, etc.).
+- [ ] Deploy behind an HTTPS reverse proxy (Nginx, Apache, etc. — Note: Azure App Service handles SSL termination).
 - [ ] Implement authentication (API keys or IP allowlisting).
 - [ ] Enable rate limiting (Flask-Limiter or reverse proxy rules).
 - [ ] Validate all input parameters against documented bounds.
@@ -297,7 +277,7 @@ For production deployments, follow these steps:
 - [ ] Use specific Python base image tag (e.g., `python:3.11.8-slim-bookworm` not `3.11-slim`)
 - [ ] Add `.dockerignore` to exclude `.git`, `.env`, caches, and test files
 - [ ] Implement HEALTHCHECK for orchestrator liveness detection
-- [ ] Run with `--read-only` filesystem where possible; mount `/app/data` as writable volume only
+- [ ] Run with `--read-only` filesystem where possible; mount `/app/data` as writable volume only (Note: DB is currently bundled in image)
 - [ ] Set resource limits (memory: 512M, CPU: 1 core recommended)
 - [ ] Use multi-stage builds to reduce final image size and attack surface
 
@@ -319,11 +299,7 @@ For production deployments, follow these steps:
 
 ### Orchestration (K8s / Docker Compose)
 
-- [ ] Use network policies to restrict inter-pod communication
-- [ ] Implement Pod Security Policies / Pod Security Standards (Kubernetes)
-- [ ] Use secrets management (Kubernetes Secrets, HashiCorp Vault) for `PLOTTER_API_KEY` if added
-- [ ] Enable audit logging for container runtime (containerd/Docker)
-- [ ] Use immutable image tags in production (e.g., `plotter:v1.2.3` not `latest`)
+**Status:** **Not relevant** (Using Azure App Service for single container deployment).
 
 ---
 
