@@ -34,7 +34,7 @@ DEFAULT_DB = "data/systems.db"
 DEFAULT_META = "systems_meta.json"
 
 BATCH_SIZE = 1000
-PROGRESS_INTERVAL = 1000
+PROGRESS_INTERVAL = 5000
 if os.environ.get("CI") == "true":
     PROGRESS_INTERVAL *= 50
 

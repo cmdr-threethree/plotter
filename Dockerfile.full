@@ -23,6 +23,9 @@ ENV PLOTTER_DB="/app/data/systems.db"
 ENV PLOTTER_DB_IMMUTABLE="true"
 ENV PORT=80
 
+ARG CI
+ENV CI=$CI
+
 # Create data directory for persistence
 RUN mkdir -p /app/data \
     && curl -fsL "https://downloads.spansh.co.uk/systems.json.gz" \

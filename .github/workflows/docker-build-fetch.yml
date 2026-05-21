@@ -6,6 +6,10 @@ on:
   push:
     branches: ['full']
 
+concurrency:
+  group: ${{ github.ref }}   # Cancel previous runs on the same branch
+  cancel-in-progress: true   # Automatically cancels any in-progress jobs in the same group
+
 # Defines two custom environment variables for the workflow. These are used for the Container registry domain, and a name for the Docker image that this workflow builds.
 env:
   REGISTRY: ghcr.io
@@ -51,6 +55,7 @@ jobs:
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:
           context: .
+          build-args: CI=true
           file: Dockerfile.full
           push: true
           tags: ${{ steps.meta.outputs.tags }}
