@@ -35,6 +35,8 @@ DEFAULT_META = "systems_meta.json"
 
 BATCH_SIZE = 1000
 PROGRESS_INTERVAL = 1000
+if os.environ.get("CI") == "true":
+    PROGRESS_INTERVAL *= 50
 
 
 def clean_json_line(line: str) -> Optional[str]:

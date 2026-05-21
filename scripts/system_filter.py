@@ -39,13 +39,14 @@ PERFORMANCE FEATURES
 • Falls back to Python's json module with a warning.
 • Uses Python's built‑in tuple hashing for cube tracking (fast, low‑memory).
 • Streams input line‑by‑line (safe for multi‑GB files).
-• Shows progress every 10k lines, including lines/second throughput.
+• Shows progress periodically (10k lines, or 500k in CI).
 
 Created by: Microsoft Copilot
 """
 
 import sys
 import time
+import os
 
 # Try to import orjson for speed
 try:
@@ -79,6 +80,10 @@ COMMON = {
 
 seen_cubes = set()
 
+PROGRESS_INTERVAL = 10000
+if os.environ.get("CI") == "true":
+    PROGRESS_INTERVAL *= 50
+
 line_count = 0
 last_count = 0
 last_time = time.time()
@@ -93,8 +98,8 @@ for line in sys.stdin:
 
     line_count += 1
 
-    # Progress every 10k lines
-    if line_count % 10000 == 0:
+    # Progress every PROGRESS_INTERVAL lines
+    if line_count % PROGRESS_INTERVAL == 0:
         now = time.time()
         dt = now - last_time
         dl = line_count - last_count
