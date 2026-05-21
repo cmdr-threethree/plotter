@@ -1,0 +1,37 @@
+# Use a lightweight Python image
+FROM python:3.11-slim
+
+# Set the working directory
+WORKDIR /app
+
+# Copy requirements and install them
+COPY webapp/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apt-get update && apt-get install -y curl python3-orjson && rm -rf /var/lib/apt/lists/* 
+
+# Copy necessary application files
+COPY webapp/ webapp/
+COPY scripts/ scripts/
+COPY systems.schema.json seed.jsonl .
+
+# Expose the port the app runs on
+EXPOSE 80
+
+# Set environment variables for the webapp
+# These point to /app/data so they can be mounted as volumes
+ENV PLOTTER_DB="/app/data/systems.db"
+ENV PLOTTER_DB_IMMUTABLE="true"
+ENV PORT=80
+
+# Create data directory for persistence
+RUN mkdir -p /app/data \
+    && curl -fsL "https://downloads.spansh.co.uk/systems.json.gz" \
+    | gzip -dc \
+    | python3 scripts/system_filter.py \
+    | python3 scripts/distance_cli_sqlite_prefix.py --build-index --db data/systems.db --file - \
+    && curl -fsL "https://downloads.spansh.co.uk/systems_neutron.json.gz" \
+    | gzip -dc \
+    | python3 scripts/distance_cli_sqlite_prefix.py --build-index --db data/systems.db --file - --mark-neutron
+
+# Default command runs the web application using Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "1", "--threads", "8", "--worker-tmp-dir", "/dev/shm", "--access-logfile", "-", "--error-logfile", "-", "webapp.app:app"]
