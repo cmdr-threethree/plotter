@@ -80,13 +80,18 @@ COMMON = {
 
 seen_cubes = set()
 
+CUBE_SIDE = int(os.environ.get("CUBE_SIDE",10))
+
 PROGRESS_INTERVAL = 10000
 if os.environ.get("CI") == "true":
     PROGRESS_INTERVAL *= 50
 
+output_count = 0
 line_count = 0
 last_count = 0
 last_time = time.time()
+
+print(f"Starting, cube side {CUBE_SIDE}", file=sys.stderr)
 
 for line in sys.stdin:
     line = line.strip()
@@ -104,7 +109,7 @@ for line in sys.stdin:
         dt = now - last_time
         dl = line_count - last_count
         lps = dl / dt if dt > 0 else 0.0
-        print(f"Processed {line_count:,} lines...  {lps:,.0f} lines/s",
+        print(f"Processed {line_count:,} lines, output {output_count:,}...  {lps:,.0f} lines/s",
               end="\r", file=sys.stderr)
         last_time = now
         last_count = line_count
@@ -122,14 +127,16 @@ for line in sys.stdin:
     # RULE 1: If name does NOT contain "-", always output
     if "-" not in name:
         print(json_dumps(obj))
+        output_count += 1
         continue
 
     # RULE 2A: Non-common star types → always output
     if star not in COMMON:
         print(json_dumps(obj))
+        output_count += 1
         continue
 
-    # RULE 2B: Common star types → one per 5x5x5 cube
+    # RULE 2B: Common star types → one per CUBE_SIDE^3 cube
     coords = obj.get("coords") or obj.get("coordsLocked") or obj.get("coordsLockedApprox")
     if not coords:
         continue
@@ -140,14 +147,15 @@ for line in sys.stdin:
     if x is None or y is None or z is None:
         continue
 
-    xc = int(x // 5)
-    yc = int(y // 5)
-    zc = int(z // 5)
+    xc = int(x // CUBE_SIDE)
+    yc = int(y // CUBE_SIDE)
+    zc = int(z // CUBE_SIDE)
 
     h = hash((xc, yc, zc))
 
     if h not in seen_cubes:
         seen_cubes.add(h)
         print(json_dumps(obj))
+        output_count += 1
 
-print(f"\nFinished. Total lines processed: {line_count:,}", file=sys.stderr)
+print(f"\nFinished. Total lines processed: {line_count:,}, output: {output_count:,}", file=sys.stderr)
