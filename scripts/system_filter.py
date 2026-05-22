@@ -80,7 +80,7 @@ COMMON = {
 
 seen_cubes = set()
 
-CUBE_SIDE = int(os.environ.get("CUBE_SIDE",50))
+CUBE_SIDE = int(os.environ.get("CUBE_SIDE",25))
 
 PROGRESS_INTERVAL = 10000
 if os.environ.get("CI") == "true":
