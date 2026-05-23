@@ -569,7 +569,6 @@ $('find-nearest').addEventListener('click', async ()=>{
     }else{
       lastSuccessTime = Date.now();
       $('info').textContent = `Found: ${data.name} | Distance: ${data.dist.toFixed(1)}ly | Star: ${data.mainStar}`;
-...
       const li = document.createElement('li');
       li.style.cursor = 'pointer';
       li.title = 'Click to copy system name';
