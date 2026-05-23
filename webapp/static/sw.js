@@ -1,4 +1,4 @@
-const CACHE_NAME = 'plotter-v9';
+const CACHE_NAME = 'plotter-v10';
 
 const ASSETS = [
   '/',

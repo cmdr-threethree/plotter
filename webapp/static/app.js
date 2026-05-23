@@ -45,6 +45,7 @@ function onBackendReady() {
 function startWarmupSequence() {
   if (isWarmingUp) return;
   isWarmingUp = true;
+  console.log("Backend warmup sequence started");
   
   $('find').disabled = true;
   $('find-nearest').disabled = true;
@@ -102,10 +103,12 @@ async function search(q) {
   searchController = new AbortController();
 
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
+    const res = await fetchWithTimeout(`/api/search?q=${encodeURIComponent(q)}`, {
       signal: searchController.signal,
+      timeout: 3000 // Short timeout for suggestions
     });
     if (res.status === 502 || res.status === 504) {
+      console.warn("Search: backend warming up (502/504)");
       startWarmupSequence();
       return [];
     }
@@ -113,8 +116,12 @@ async function search(q) {
     lastSuccessTime = Date.now();
     return await res.json();
   } catch (err) {
-    if (err.name === "AbortError") return null; // Request was cancelled
-    console.error("Search error:", err);
+    if (err.name === "AbortError" && !isWarmingUp) return null; // Normal cancellation
+    if (err.name === "AbortError" && isWarmingUp) return []; // Already warming up
+    
+    // If it timed out or had a network error, it might be warming up
+    console.warn("Search error (possibly warming up):", err);
+    startWarmupSequence();
     return [];
   }
 }
