@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import logging
+import time
 from functools import lru_cache
 from flask import (
     Flask,
@@ -88,6 +89,25 @@ def get_cached_search(q, limit=20):
 
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+
+# Slow Start Simulation Config
+APP_START_TIME = time.time()
+SLOW_START_SECONDS = int(os.environ.get("PLOTTER_SLOW_START_SECONDS", 0))
+
+
+@app.before_request
+def simulate_slow_start():
+    if SLOW_START_SECONDS <= 0:
+        return
+    if not request.path.startswith("/api/"):
+        return
+
+    elapsed = time.time() - APP_START_TIME
+    if elapsed < SLOW_START_SECONDS:
+        wait_time = SLOW_START_SECONDS - elapsed
+        logger.info(f"Simulating slow start: sleeping for {wait_time:.1f}s")
+        time.sleep(wait_time)
+
 
 # If running under Gunicorn, bridge logs
 if "gunicorn" in os.environ.get("SERVER_SOFTWARE", ""):
