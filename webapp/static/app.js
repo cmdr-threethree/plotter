@@ -6,15 +6,37 @@ let warmupPollInterval = null;
 let warmupCountdownInterval = null;
 
 async function fetchWithTimeout(resource, options = {}) {
-  const { timeout = 8000 } = options;
+  const { timeout = 8000, signal } = options;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
-  const response = await fetch(resource, {
-    ...options,
-    signal: controller.signal
-  });
-  clearTimeout(id);
-  return response;
+  
+  // If an external signal is provided, listen for it to abort our internal controller
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    signal.addEventListener('abort', () => controller.abort());
+  }
+
+  try {
+    const response = await fetch(resource, {
+      ...options,
+      signal: controller.signal
+    });
+    return response;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      // If the external signal was aborted, it's a manual cancellation
+      if (signal && signal.aborted) {
+        throw error; // Re-throw to be handled as manual abort
+      }
+      // Otherwise, it was our internal timeout
+      const timeoutError = new Error('Request timed out');
+      timeoutError.name = 'TimeoutError';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(id);
+  }
 }
 
 function updateWarmupUI(seconds) {
@@ -116,11 +138,12 @@ async function search(q) {
     lastSuccessTime = Date.now();
     return await res.json();
   } catch (err) {
-    if (err.name === "AbortError" && !isWarmingUp) return null; // Normal cancellation
-    if (err.name === "AbortError" && isWarmingUp) return []; // Already warming up
+    if (err.name === "AbortError") {
+      return null; // Manual cancellation, do nothing
+    }
     
-    // If it timed out or had a network error, it might be warming up
-    console.warn("Search error (possibly warming up):", err);
+    // TimeoutError or other network errors
+    console.warn("Search error (triggering warmup):", err);
     startWarmupSequence();
     return [];
   }
