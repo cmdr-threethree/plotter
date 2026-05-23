@@ -439,7 +439,8 @@ $('find').addEventListener('click', async ()=>{
           if (data.suggestion) {
             const div = document.createElement('div');
             div.className = 'suggestion-box';
-            div.innerHTML = `<span>Try plotting to a system closer to the limit:</span><br/><strong>${data.suggestion.name}</strong> (~25k ly away)`;
+            const typeStr = data.is_neutron ? 'Neutron Star' : 'system';
+            div.innerHTML = `<span>Try plotting to a ${typeStr} closer to the limit:</span><br/><strong>${data.suggestion.name}</strong> (~25k ly away)`;
             const btn = document.createElement('button');
             btn.textContent = 'Use as Target';
             btn.style.marginLeft = '12px';

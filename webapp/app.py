@@ -316,12 +316,21 @@ def api_path_stream():
                     "y": sc["y"] + (tc["y"] - sc["y"]) * ratio,
                     "z": sc["z"] + (tc["z"] - sc["z"]) * ratio
                 }
-                suggestion = distance.nearest_of_type(conn, wp_coords, None, COORD_SCALE)
+                
+                # If neutron highway is enabled, suggest a Neutron Star
+                type_ids = None
+                if neutron_highway:
+                    ns_id = STAR_NAME_TO_ID.get("Neutron Star")
+                    if ns_id is not None:
+                        type_ids = [ns_id]
+                
+                suggestion = distance.nearest_of_type(conn, wp_coords, type_ids, COORD_SCALE)
                 result_q.put({
                     "error": "limit_exceeded", 
                     "limit": MAX_ROUTE_LY, 
                     "dist": direct_dist,
-                    "suggestion": suggestion
+                    "suggestion": suggestion,
+                    "is_neutron": (type_ids is not None and suggestion is not None)
                 })
                 return
 
