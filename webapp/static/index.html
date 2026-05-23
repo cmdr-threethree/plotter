@@ -47,7 +47,20 @@
         </div>
         <div class="row">
           <label>Star types</label>
-          <input id="near-types" placeholder="e.g. Neutron Star, White Dwarf" />
+          <div class="star-selector">
+            <div id="selected-chips" class="chips-list"></div>
+            <input id="star-search" placeholder="Search star types..." autocomplete="off" />
+            <div id="star-dropdown" class="star-dropdown hidden"></div>
+          </div>
+        </div>
+        <div class="row" style="margin-top: -8px;">
+          <label></label>
+          <div class="presets-row">
+            <button id="preset-kgbfoam" class="preset-btn">KGB FOAM</button>
+            <button id="preset-neutron" class="preset-btn">Neutron/WD</button>
+            <button id="preset-exotic" class="preset-btn">Exotic</button>
+            <button id="clear-types" class="preset-btn" style="color: #b91c1c;">Clear</button>
+          </div>
         </div>
         <div class="row">
           <button id="find-nearest">Find nearest</button>

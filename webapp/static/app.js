@@ -76,6 +76,118 @@ setupSuggestionInput("source", "src-suggestions");
 setupSuggestionInput("target", "tgt-suggestions");
 setupSuggestionInput("near", "near-suggestions", true);
 
+// Star Type Selector Implementation
+const ALL_STAR_TYPES = [
+  "A (Blue-White super giant) Star", "A (Blue-White) Star", "Ammonia world",
+  "B (Blue-White super giant) Star", "B (Blue-White) Star", "Black Hole",
+  "C Star", "CJ Star", "CN Star", "Class I gas giant", "Class II gas giant",
+  "Class III gas giant", "Class IV gas giant", "Class V gas giant",
+  "Earth-like world", "F (White super giant) Star", "F (White) Star",
+  "G (White-Yellow super giant) Star", "G (White-Yellow) Star",
+  "Gas giant with ammonia-based life", "Gas giant with water-based life",
+  "Helium gas giant", "Helium-rich gas giant", "Herbig Ae/Be Star",
+  "High metal content world", "Icy body", "K (Yellow-Orange giant) Star",
+  "K (Yellow-Orange) Star", "L (Brown dwarf) Star", "M (Red dwarf) Star",
+  "M (Red giant) Star", "M (Red super giant) Star", "MS-type Star",
+  "Metal-rich body", "Neutron Star", "O (Blue-White) Star", "Rocky Ice world",
+  "Rocky body", "S-type Star", "Supermassive Black Hole", "T (Brown dwarf) Star",
+  "T Tauri Star", "Water giant", "Water world", "White Dwarf (D) Star",
+  "White Dwarf (DA) Star", "White Dwarf (DAB) Star", "White Dwarf (DAV) Star",
+  "White Dwarf (DAZ) Star", "White Dwarf (DB) Star", "White Dwarf (DBV) Star",
+  "White Dwarf (DBZ) Star", "White Dwarf (DC) Star", "White Dwarf (DCV) Star",
+  "White Dwarf (DQ) Star", "Wolf-Rayet C Star", "Wolf-Rayet N Star",
+  "Wolf-Rayet NC Star", "Wolf-Rayet O Star", "Wolf-Rayet Star",
+  "Y (Brown dwarf) Star"
+];
+
+let selectedStarTypes = new Set();
+
+function renderChips() {
+  const container = $('selected-chips');
+  container.innerHTML = '';
+  selectedStarTypes.forEach(type => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = type;
+    const remove = document.createElement('span');
+    remove.className = 'remove';
+    remove.textContent = '×';
+    remove.onclick = () => {
+      selectedStarTypes.delete(type);
+      renderChips();
+    };
+    chip.appendChild(remove);
+    container.appendChild(chip);
+  });
+}
+
+function updateStarDropdown(q) {
+  const dd = $('star-dropdown');
+  dd.innerHTML = '';
+  if (!q) {
+    dd.classList.add('hidden');
+    return;
+  }
+  const filtered = ALL_STAR_TYPES.filter(t => 
+    t.toLowerCase().includes(q.toLowerCase()) && !selectedStarTypes.has(t)
+  ).slice(0, 10);
+
+  if (filtered.length === 0) {
+    dd.classList.add('hidden');
+    return;
+  }
+
+  filtered.forEach(t => {
+    const div = document.createElement('div');
+    div.textContent = t;
+    div.onclick = () => {
+      selectedStarTypes.add(t);
+      $('star-search').value = '';
+      dd.classList.add('hidden');
+      renderChips();
+    };
+    dd.appendChild(div);
+  });
+  dd.classList.remove('hidden');
+}
+
+$('star-search').addEventListener('input', (e) => {
+  updateStarDropdown(e.target.value.trim());
+});
+
+$('star-search').addEventListener('focus', (e) => {
+  updateStarDropdown(e.target.value.trim());
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.star-selector')) {
+    $('star-dropdown').classList.add('hidden');
+  }
+});
+
+const PRESETS = {
+  'kgbfoam': ["K (Yellow-Orange) Star", "G (White-Yellow) Star", "B (Blue-White) Star", "F (White) Star", "O (Blue-White) Star", "A (Blue-White) Star", "M (Red dwarf) Star"],
+  'neutron': ["Neutron Star", "White Dwarf (D) Star", "White Dwarf (DA) Star", "White Dwarf (DAB) Star", "White Dwarf (DAV) Star", "White Dwarf (DAZ) Star", "White Dwarf (DB) Star", "White Dwarf (DBV) Star", "White Dwarf (DBZ) Star", "White Dwarf (DC) Star", "White Dwarf (DCV) Star", "White Dwarf (DQ) Star"],
+  'exotic': ["Black Hole", "Supermassive Black Hole", "Wolf-Rayet Star", "Wolf-Rayet C Star", "Wolf-Rayet N Star", "Wolf-Rayet NC Star", "Wolf-Rayet O Star", "Herbig Ae/Be Star"]
+};
+
+$('preset-kgbfoam').onclick = () => {
+  PRESETS.kgbfoam.forEach(t => selectedStarTypes.add(t));
+  renderChips();
+};
+$('preset-neutron').onclick = () => {
+  PRESETS.neutron.forEach(t => selectedStarTypes.add(t));
+  renderChips();
+};
+$('preset-exotic').onclick = () => {
+  PRESETS.exotic.forEach(t => selectedStarTypes.add(t));
+  renderChips();
+};
+$('clear-types').onclick = () => {
+  selectedStarTypes.clear();
+  renderChips();
+};
+
 $('reverse').addEventListener('click', ()=>{
   const s = $('source').value;
   $('source').value = $('target').value;
@@ -334,7 +446,7 @@ $('import-file').addEventListener('change', (e) => {
 
 $('find-nearest').addEventListener('click', async ()=>{
   const near = $('near').value.trim();
-  let types = $('near-types').value.trim();
+  let types = Array.from(selectedStarTypes).join(',');
   if(!near){
     $('info').textContent = 'Enter reference point';
     return;
