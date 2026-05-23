@@ -434,7 +434,25 @@ $('find').addEventListener('click', async ()=>{
       const data = JSON.parse(ev.data);
       console.log('Result:', data);
       if(data.error){
-        $('info').textContent = data.error;
+        if (data.error === 'limit_exceeded') {
+          $('info').innerHTML = `<span style="color: #b91c1c; font-weight: bold;">Route exceeds limit of ${data.limit.toLocaleString()} ly</span><br/>Direct distance: ${data.dist.toFixed(0)} ly`;
+          if (data.suggestion) {
+            const div = document.createElement('div');
+            div.className = 'suggestion-box';
+            div.innerHTML = `<span>Try plotting to a system closer to the limit:</span><br/><strong>${data.suggestion.name}</strong> (~25k ly away)`;
+            const btn = document.createElement('button');
+            btn.textContent = 'Use as Target';
+            btn.style.marginLeft = '12px';
+            btn.onclick = () => {
+              $('target').value = data.suggestion.name;
+              $('find').click();
+            };
+            div.appendChild(btn);
+            $('info').appendChild(div);
+          }
+        } else {
+          $('info').textContent = data.error;
+        }
       }else{
         lastSuccessTime = Date.now();
         $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;

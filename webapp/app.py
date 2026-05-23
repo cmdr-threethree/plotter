@@ -94,6 +94,9 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 APP_START_TIME = time.time()
 SLOW_START_SECONDS = int(os.environ.get("PLOTTER_SLOW_START_SECONDS", 0))
 
+# Route Length Limit
+MAX_ROUTE_LY = float(os.environ.get("PLOTTER_MAX_ROUTE_LY", 26000.0))
+
 
 @app.before_request
 def simulate_slow_start():
@@ -299,6 +302,28 @@ def api_path_stream():
                 return
             s = s_list[0]
             t = t_list[0]
+
+            # Direct distance check
+            sc = s["coords"]
+            tc = t["coords"]
+            direct_dist = ((tc["x"] - sc["x"])**2 + (tc["y"] - sc["y"])**2 + (tc["z"] - sc["z"])**2)**0.5
+            
+            if direct_dist > MAX_ROUTE_LY:
+                # Calculate a waypoint at 25,000 ly along the vector
+                ratio = 25000.0 / direct_dist
+                wp_coords = {
+                    "x": sc["x"] + (tc["x"] - sc["x"]) * ratio,
+                    "y": sc["y"] + (tc["y"] - sc["y"]) * ratio,
+                    "z": sc["z"] + (tc["z"] - sc["z"]) * ratio
+                }
+                suggestion = distance.nearest_of_type(conn, wp_coords, None, COORD_SCALE)
+                result_q.put({
+                    "error": "limit_exceeded", 
+                    "limit": MAX_ROUTE_LY, 
+                    "dist": direct_dist,
+                    "suggestion": suggestion
+                })
+                return
 
             def on_progress(msg: str):
                 try:
