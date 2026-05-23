@@ -104,6 +104,11 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.route("/api/health")
+def api_health():
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/search")
 def api_search():
     q = request.args.get("q", "").strip()

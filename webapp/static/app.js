@@ -1,5 +1,95 @@
 const $ = (id) => document.getElementById(id);
 
+let lastSuccessTime = 0;
+let isWarmingUp = false;
+let warmupPollInterval = null;
+let warmupCountdownInterval = null;
+
+async function fetchWithTimeout(resource, options = {}) {
+  const { timeout = 8000 } = options;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  const response = await fetch(resource, {
+    ...options,
+    signal: controller.signal
+  });
+  clearTimeout(id);
+  return response;
+}
+
+function updateWarmupUI(seconds) {
+  const bar = $('backend-status');
+  bar.className = 'status-bar warming';
+  bar.textContent = `Backend is warming up... Ready in approx. ${seconds}s`;
+  bar.classList.remove('hidden');
+}
+
+function onBackendReady() {
+  isWarmingUp = false;
+  lastSuccessTime = Date.now();
+  clearInterval(warmupPollInterval);
+  clearInterval(warmupCountdownInterval);
+  
+  const bar = $('backend-status');
+  bar.className = 'status-bar ready';
+  bar.textContent = 'Backend Ready!';
+  
+  $('find').disabled = false;
+  $('find-nearest').disabled = false;
+  
+  setTimeout(() => {
+    if (!isWarmingUp) bar.classList.add('hidden');
+  }, 3000);
+}
+
+function startWarmupSequence() {
+  if (isWarmingUp) return;
+  isWarmingUp = true;
+  
+  $('find').disabled = true;
+  $('find-nearest').disabled = true;
+  
+  let seconds = 60;
+  updateWarmupUI(seconds);
+  
+  warmupCountdownInterval = setInterval(() => {
+    seconds = Math.max(0, seconds - 1);
+    if (isWarmingUp) updateWarmupUI(seconds);
+  }, 1000);
+  
+  warmupPollInterval = setInterval(async () => {
+    try {
+      const res = await fetchWithTimeout('/api/health', { timeout: 2000 });
+      if (res.ok) {
+        onBackendReady();
+      }
+    } catch (e) {
+      // Still warming up
+    }
+  }, 3000);
+}
+
+async function ensureBackendReady() {
+  // Optimistic 5-minute health cache
+  if (Date.now() - lastSuccessTime < 300000) {
+    return true;
+  }
+  
+  try {
+    // Fast 2-second pre-flight check
+    const res = await fetchWithTimeout('/api/health', { timeout: 2000 });
+    if (res.ok) {
+      lastSuccessTime = Date.now();
+      return true;
+    }
+  } catch (e) {
+    // Timeout or error, start warmup
+  }
+  
+  startWarmupSequence();
+  return false;
+}
+
 let searchController = null;
 
 async function search(q) {
@@ -15,7 +105,12 @@ async function search(q) {
     const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
       signal: searchController.signal,
     });
+    if (res.status === 502 || res.status === 504) {
+      startWarmupSequence();
+      return [];
+    }
     if (!res.ok) return [];
+    lastSuccessTime = Date.now();
     return await res.json();
   } catch (err) {
     if (err.name === "AbortError") return null; // Request was cancelled
@@ -270,6 +365,8 @@ function renderPath(data, maxHop) {
 }
 
 $('find').addEventListener('click', async ()=>{
+  if (!(await ensureBackendReady())) return;
+
   const source = $('source').value.trim();
   const target = $('target').value.trim();
   const max_hop = parseFloat($('max-hop').value) || 400;
@@ -309,6 +406,7 @@ $('find').addEventListener('click', async ()=>{
       if(data.error){
         $('info').textContent = data.error;
       }else{
+        lastSuccessTime = Date.now();
         $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;
         lastResult = data;
         $('save-container').style.display = 'block';
@@ -443,8 +541,9 @@ $('import-file').addEventListener('change', (e) => {
   };
   reader.readAsText(file);
 });
-
 $('find-nearest').addEventListener('click', async ()=>{
+  if (!(await ensureBackendReady())) return;
+
   const near = $('near').value.trim();
   let types = Array.from(selectedStarTypes).join(',');
   if(!near){
@@ -455,16 +554,22 @@ $('find-nearest').addEventListener('click', async ()=>{
   $('path-list').innerHTML = '';
   $('save-container').style.display = 'none';
   lastResult = null;
-  
+
   try {
     const params = new URLSearchParams({near, types});
-    const res = await fetch(`/api/nearest?${params.toString()}`);
+    const res = await fetchWithTimeout(`/api/nearest?${params.toString()}`);
+    if (res.status === 502 || res.status === 504) {
+      startWarmupSequence();
+      return;
+    }
     const data = await res.json();
     console.log('Nearest Result:', data);
     if(data.error){
       $('info').textContent = data.error;
     }else{
+      lastSuccessTime = Date.now();
       $('info').textContent = `Found: ${data.name} | Distance: ${data.dist.toFixed(1)}ly | Star: ${data.mainStar}`;
+...
       const li = document.createElement('li');
       li.style.cursor = 'pointer';
       li.title = 'Click to copy system name';
