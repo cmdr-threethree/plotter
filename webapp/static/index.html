@@ -30,27 +30,28 @@
       <section id="home-tab" class="tab-content active">
         <div class="card">
           <h2>Welcome to Plotter</h2>
-          <p>Plotter is a high-performance navigation tool designed for deep-space pathfinding. It uses a specialized A* implementation to find efficient routes between star systems.</p>
           
           <h3>How to use</h3>
           <ul>
-            <li><strong>Plotter:</strong> Enter a source and target system to find the shortest path. Enable "Neutron Highway" for faster travel using neutron stars.</li>
+            <li><strong>Plotter:</strong> Enter a source and target system to find the shortest path. Enable "Neutron Highway" for faster travel using neutron stars boosting (especially useful with Caspian Explorer Mk II Supercharge Optimised Frame Shift Drive 6x boost). Regular plotting with 500 ly max hop can be used for carrier plotting.</li>
             <li><strong>Search:</strong> Find the nearest systems from a specific location, filtered by star types.</li>
             <li><strong>Library:</strong> Save your favorite routes for quick access later. All data is stored locally in your browser.</li>
           </ul>
 
           <div class="details-section">
             <h3>Technical Details</h3>
-            <p>The backend is powered by a custom SQLite implementation utilizing prefix-compressed system names for ultra-fast lookups. To maintain high performance while keeping costs low:</p>
+            <p>The backend is powered by a custom SQLite implementation utilizing prefix-compressed system names for fast lookups. To maintain high performance while keeping costs low:</p>
             <ul>
               <li><strong>Cloud Hosting:</strong> The system runs on <strong>Azure Container Apps</strong> with auto-shutdown enabled.</li>
-              <li><strong>Backend Warmup:</strong> If the app hasn't been used recently, it may take <strong>about a minute</strong> to start the backend services. A progress bar will appear during this time.</li>
-              <li><strong>Dataset Optimization:</strong> To reduce the ~140M system dataset, the database is filtered:
+              <li><strong>Backend Warmup:</strong> If the app hasn't been used recently, it may take <strong>about a minute</strong> to start the backend service. A progress bar will appear during this time.</li>
+              <li><strong>Dataset Optimization:</strong> To reduce the ~190M system dataset, the database is filtered:
                 <ul>
                   <li>Unique/hand-named systems and non-common star types (Neutron, Black Holes, etc.) are always preserved.</li>
-                  <li>Common stars are down-sampled to exactly <strong>one system per 5&times;5&times;5 ly cube</strong> to maintain spatial coverage while reducing density.</li>
+                  <li>Common stars are down-sampled to <strong>one system per 50&times;50&times;50 ly cube</strong> to maintain spatial coverage while reducing density.</li>
+                  <li>This results in approximately 2GB database size.
                 </ul>
               </li>
+              <li><strong>Thanks:</strong> Elite Dangerous community, especially EDSM and Spansh and of course <i>fdev</>.</li>
             </ul>
           </div>
         </div>
@@ -147,7 +148,7 @@
         </div>
       </section>
     </main>
-    <footer>Flask + SPA demo</footer>
+    <footer>Plotter by Cmdr ThreeThree. Source at <a href="https://github.com/cmdr-threethree/plotter">github.com/cmdr-threethree/plotter</a>. Elite Dangerous™ is a trademark of Frontier Developments plc. This tool is an independent, unofficial project and is not endorsed by Frontier Developments.</footer>
   </div>
   <div id="toast-container"></div>
   <script src="app.js"></script>
