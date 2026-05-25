@@ -151,6 +151,28 @@ header h1{margin:0}
 .icon-btn:hover {
     background: var(--suggest-hover);
 }
+
+.tabs{display:flex;gap:4px;margin-bottom:1.5em;border-bottom:1px solid var(--border-color);padding-bottom:2px;overflow-x:auto}
+.tab-btn{background:transparent;color:var(--text-main);border:none;border-radius:6px 6px 0 0;padding:10px 16px;cursor:pointer;font-weight:600;white-space:nowrap;transition:background 0.2s}
+.tab-btn:hover{background:rgba(255,255,255,0.05)}
+.tab-btn.active{background:var(--btn-primary);color:var(--btn-text)}
+
+.tab-content{display:none}
+.tab-content.active{display:block;animation:fadeIn 0.2s ease-out}
+
+.card{background:var(--bg-main);border:1px solid var(--border-color);border-radius:12px;padding:20px;line-height:1.6}
+.card h2{margin-top:0}
+.card h3{margin-top:1.5em;color:var(--btn-primary)}
+.card ul{padding-left:1.5em}
+.card li{margin-bottom:0.5em}
+.details-section{margin-top:2em;padding-top:1.5em;border-top:1px dashed var(--border-color);font-size:0.95em;opacity:0.9}
+
+.results-area{margin-top:2em}
+.results-area.hidden{display:none}
+.results-area hr{border:0;border-top:1px solid var(--border-color);margin:2em 0}
+
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
 .controls{display:flex;flex-direction:column;gap:12px}
 .row{display:flex;gap:8px;align-items:center}
 .row label{width:90px}

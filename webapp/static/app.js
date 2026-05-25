@@ -1,5 +1,27 @@
 const $ = (id) => document.getElementById(id);
 
+// Tab Switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tabId = btn.getAttribute('data-tab');
+    
+    // Update buttons
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    
+    // Update content
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    $(`${tabId}-tab`).classList.add('active');
+    
+    // Auto-hide/show results based on tab
+    if (tabId === 'home') {
+      $('results').classList.add('hidden');
+    } else if (lastResult || $('path-list').children.length > 0) {
+      $('results').classList.remove('hidden');
+    }
+  });
+});
+
 // Theme Toggle Logic
 function setTheme(theme, persist = true) {
   document.documentElement.setAttribute('data-theme', theme);
@@ -442,6 +464,7 @@ $('find').addEventListener('click', async ()=>{
   }
 
   $('info').textContent = 'Searching...';
+  $('results').classList.remove('hidden');
   $('search-progress').classList.remove('hidden');
   $('path-list').innerHTML = '';
   $('save-container').style.display = 'none';
@@ -557,6 +580,7 @@ $('load-route').addEventListener('click', () => {
     lastResult = route.result;
     
     $('info').textContent = `Loaded: Total: ${lastResult.total.toFixed(1)} ly | Direct: ${lastResult.direct.toFixed(1)} ly | Diff: +${lastResult.diff_pct.toFixed(1)}%`;
+    $('results').classList.remove('hidden');
     $('save-container').style.display = 'block';
     renderPath(lastResult, route.params.max_hop);
   }
@@ -635,6 +659,7 @@ $('find-nearest').addEventListener('click', async ()=>{
     return;
   }
   $('info').textContent = 'Searching...';
+  $('results').classList.remove('hidden');
   $('search-progress').classList.remove('hidden');
   $('path-list').innerHTML = '';
   $('save-container').style.display = 'none';

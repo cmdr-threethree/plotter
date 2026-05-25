@@ -17,64 +17,122 @@
       <h1>Plotter</h1>
       <button id="theme-toggle" class="icon-btn" title="Toggle dark/light mode">🌓</button>
     </header>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="home">🏠 Home</button>
+      <button class="tab-btn" data-tab="plotter">🚀 Plotter</button>
+      <button class="tab-btn" data-tab="search">🔍 Search</button>
+      <button class="tab-btn" data-tab="library">📚 Library</button>
+    </nav>
+
     <main>
-      <div class="controls">
-        <div class="row">
-          <label>Source</label>
-          <input id="source" placeholder="system name or id64" />
-          <div id="src-suggestions" class="suggestions"></div>
-        </div>
-        <div class="row" style="text-align: center;">
-          <button id="reverse" title="Swap source and target">⇅ Reverse</button>
-        </div>
-        <div class="row">
-          <label>Target</label>
-          <input id="target" placeholder="system name or id64" />
-          <div id="tgt-suggestions" class="suggestions"></div>
-        </div>
-        <div class="row small">
-          <label>Max hop</label>
-          <input id="max-hop" type="number" value="400" />
-        </div>
-        <div class="row small">
-          <label for="neutron-highway">Neutron Highway</label>
-          <input id="neutron-highway" type="checkbox" />
-        </div>
-        <div class="row">
-          <button id="find">Find path</button>
-        </div>
-      </div>
+      <!-- Home Tab -->
+      <section id="home-tab" class="tab-content active">
+        <div class="card">
+          <h2>Welcome to Plotter</h2>
+          <p>Plotter is a high-performance navigation tool designed for deep-space pathfinding. It uses a specialized A* implementation to find efficient routes between star systems.</p>
+          
+          <h3>How to use</h3>
+          <ul>
+            <li><strong>Plotter:</strong> Enter a source and target system to find the shortest path. Enable "Neutron Highway" for faster travel using neutron stars.</li>
+            <li><strong>Search:</strong> Find the nearest systems from a specific location, filtered by star types.</li>
+            <li><strong>Library:</strong> Save your favorite routes for quick access later. All data is stored locally in your browser.</li>
+          </ul>
 
-      <div class="controls" style="margin-top: 2em;">
-        <h3>Find Nearest System</h3>
-        <div class="row">
-          <label>Near</label>
-          <input id="near" placeholder="system name, id64, or x,y,z" />
-          <div id="near-suggestions" class="suggestions"></div>
-        </div>
-        <div class="row">
-          <label>Star types</label>
-          <div class="star-selector">
-            <div id="selected-chips" class="chips-list"></div>
-            <input id="star-search" placeholder="Search star types..." autocomplete="off" />
-            <div id="star-dropdown" class="star-dropdown hidden"></div>
+          <div class="details-section">
+            <h3>Technical Details</h3>
+            <p>The backend is powered by a custom SQLite implementation utilizing prefix-compressed system names for ultra-fast lookups. To maintain high performance while keeping costs low:</p>
+            <ul>
+              <li><strong>Cloud Hosting:</strong> The system runs on <strong>Azure Container Apps</strong> with auto-shutdown enabled.</li>
+              <li><strong>Backend Warmup:</strong> If the app hasn't been used recently, it may take <strong>about a minute</strong> to start the backend services. A progress bar will appear during this time.</li>
+              <li><strong>Filtering:</strong> "Find Nearest" uses a spatial cube filter (side length of <strong>50 ly</strong>) to efficiently narrow down candidate systems before calculating exact distances.</li>
+            </ul>
           </div>
         </div>
-        <div class="row" style="margin-top: -8px;">
-          <label></label>
-          <div class="presets-row">
-            <button id="preset-kgbfoam" class="preset-btn">KGB FOAM</button>
-            <button id="preset-neutron" class="preset-btn">Neutron/WD</button>
-            <button id="preset-exotic" class="preset-btn">Exotic</button>
-            <button id="clear-types" class="preset-btn" style="color: #b91c1c;">Clear</button>
+      </section>
+
+      <!-- Plotter Tab -->
+      <section id="plotter-tab" class="tab-content">
+        <div class="controls">
+          <div class="row">
+            <label>Source</label>
+            <input id="source" placeholder="system name or id64" />
+            <div id="src-suggestions" class="suggestions"></div>
+          </div>
+          <div class="row" style="text-align: center;">
+            <button id="reverse" title="Swap source and target">⇅ Reverse</button>
+          </div>
+          <div class="row">
+            <label>Target</label>
+            <input id="target" placeholder="system name or id64" />
+            <div id="tgt-suggestions" class="suggestions"></div>
+          </div>
+          <div class="row small">
+            <label>Max hop</label>
+            <input id="max-hop" type="number" value="400" />
+          </div>
+          <div class="row small">
+            <label for="neutron-highway">Neutron Highway</label>
+            <input id="neutron-highway" type="checkbox" />
+          </div>
+          <div class="row">
+            <button id="find">Find path</button>
           </div>
         </div>
-        <div class="row">
-          <button id="find-nearest">Find nearest</button>
-        </div>
-      </div>
+      </section>
 
-      <section id="results">
+      <!-- Search Tab -->
+      <section id="search-tab" class="tab-content">
+        <div class="controls">
+          <div class="row">
+            <label>Near</label>
+            <input id="near" placeholder="system name, id64, or x,y,z" />
+            <div id="near-suggestions" class="suggestions"></div>
+          </div>
+          <div class="row">
+            <label>Star types</label>
+            <div class="star-selector">
+              <div id="selected-chips" class="chips-list"></div>
+              <input id="star-search" placeholder="Search star types..." autocomplete="off" />
+              <div id="star-dropdown" class="star-dropdown hidden"></div>
+            </div>
+          </div>
+          <div class="row" style="margin-top: -8px;">
+            <label></label>
+            <div class="presets-row">
+              <button id="preset-kgbfoam" class="preset-btn">KGB FOAM</button>
+              <button id="preset-neutron" class="preset-btn">Neutron/WD</button>
+              <button id="preset-exotic" class="preset-btn">Exotic</button>
+              <button id="clear-types" class="preset-btn" style="color: #b91c1c;">Clear</button>
+            </div>
+          </div>
+          <div class="row">
+            <button id="find-nearest">Find nearest</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Library Tab -->
+      <section id="library-tab" class="tab-content">
+        <div class="controls">
+          <div class="row">
+            <select id="saved-routes-list">
+              <option value="">-- No saved routes --</option>
+            </select>
+          </div>
+          <div class="row">
+            <button id="load-route">📂 Load</button>
+            <button id="export-route">📤 Export</button>
+            <button id="import-btn">📥 Import</button>
+            <input type="file" id="import-file" style="display:none" accept=".json" />
+            <button id="delete-route" style="background-color: #722;">🗑 Delete</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Shared Results Section -->
+      <section id="results" class="results-area hidden">
+        <hr/>
         <h2>Results</h2>
         <div id="search-progress" class="progress-container hidden" style="margin-bottom: 1em;"><div class="progress-bar indeterminate"></div></div>
         <div id="info"></div>
@@ -83,22 +141,6 @@
           <button id="save-route">💾 Save this route</button>
         </div>
       </section>
-
-      <div class="controls" style="margin-top: 2em;">
-        <h3>Saved Routes</h3>
-        <div class="row">
-          <select id="saved-routes-list">
-            <option value="">-- No saved routes --</option>
-          </select>
-        </div>
-        <div class="row">
-          <button id="load-route">📂 Load</button>
-          <button id="export-route">📤 Export</button>
-          <button id="import-btn">📥 Import</button>
-          <input type="file" id="import-file" style="display:none" accept=".json" />
-          <button id="delete-route" style="background-color: #722;">🗑 Delete</button>
-        </div>
-      </div>
     </main>
     <footer>Flask + SPA demo</footer>
   </div>
