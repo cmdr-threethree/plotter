@@ -1,5 +1,39 @@
 const $ = (id) => document.getElementById(id);
 
+// Theme Toggle Logic
+function setTheme(theme, persist = true) {
+  document.documentElement.setAttribute('data-theme', theme);
+  if (persist) {
+    localStorage.setItem('plotter_theme', theme);
+  }
+}
+
+function initTheme() {
+  const saved = localStorage.getItem('plotter_theme');
+  if (saved) {
+    setTheme(saved, false);
+  } else {
+    const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    setTheme(prefersLight ? 'light' : 'dark', false);
+  }
+}
+
+// Listen for system theme changes if no manual override
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
+    if (!localStorage.getItem('plotter_theme')) {
+      setTheme(e.matches ? 'light' : 'dark', false);
+    }
+  });
+}
+
+$('theme-toggle').addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  setTheme(current === 'light' ? 'dark' : 'light');
+});
+
+initTheme();
+
 let lastSuccessTime = 0;
 let isWarmingUp = false;
 let warmupPollInterval = null;
