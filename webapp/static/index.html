@@ -45,7 +45,12 @@
             <ul>
               <li><strong>Cloud Hosting:</strong> The system runs on <strong>Azure Container Apps</strong> with auto-shutdown enabled.</li>
               <li><strong>Backend Warmup:</strong> If the app hasn't been used recently, it may take <strong>about a minute</strong> to start the backend services. A progress bar will appear during this time.</li>
-              <li><strong>Filtering:</strong> "Find Nearest" uses a spatial cube filter (side length of <strong>50 ly</strong>) to efficiently narrow down candidate systems before calculating exact distances.</li>
+              <li><strong>Dataset Optimization:</strong> To reduce the ~140M system dataset, the database is filtered:
+                <ul>
+                  <li>Unique/hand-named systems and non-common star types (Neutron, Black Holes, etc.) are always preserved.</li>
+                  <li>Common stars are down-sampled to exactly <strong>one system per 5&times;5&times;5 ly cube</strong> to maintain spatial coverage while reducing density.</li>
+                </ul>
+              </li>
             </ul>
           </div>
         </div>
