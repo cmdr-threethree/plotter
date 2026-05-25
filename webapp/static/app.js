@@ -34,6 +34,19 @@ $('theme-toggle').addEventListener('click', () => {
 
 initTheme();
 
+function showToast(message, duration = 3000) {
+  const container = $('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add('out');
+    toast.addEventListener('animationend', () => toast.remove());
+  }, duration);
+}
+
 let lastSuccessTime = 0;
 let isWarmingUp = false;
 let warmupPollInterval = null;
@@ -76,7 +89,12 @@ async function fetchWithTimeout(resource, options = {}) {
 function updateWarmupUI(seconds) {
   const bar = $('backend-status');
   bar.className = 'status-bar warming';
-  bar.textContent = `Backend is warming up... Ready in approx. ${seconds}s`;
+  bar.querySelector('.status-text').textContent = `Backend is warming up... Ready in approx. ${seconds}s`;
+  
+  const progress = bar.querySelector('.progress-bar');
+  const pct = Math.max(0, Math.min(100, ((60 - seconds) / 60) * 100));
+  progress.style.width = `${pct}%`;
+  
   bar.classList.remove('hidden');
 }
 
@@ -88,7 +106,8 @@ function onBackendReady() {
   
   const bar = $('backend-status');
   bar.className = 'status-bar ready';
-  bar.textContent = 'Backend Ready!';
+  bar.querySelector('.status-text').textContent = 'Backend Ready!';
+  bar.querySelector('.progress-bar').style.width = '100%';
   
   $('find').disabled = false;
   $('find-nearest').disabled = false;
@@ -397,31 +416,9 @@ function renderPath(data, maxHop) {
           document.execCommand('copy');
           document.body.removeChild(ta);
         }
-        if (window._infoRestoreTimeout == null) {
-          window._infoPrevText = $('info').textContent;
-        }
-        $('info').textContent = `Copied: ${txt}`;
-        if (window._infoRestoreTimeout) {
-          clearTimeout(window._infoRestoreTimeout);
-        }
-        window._infoRestoreTimeout = setTimeout(()=>{
-          $('info').textContent = window._infoPrevText || '';
-          window._infoRestoreTimeout = null;
-          window._infoPrevText = null;
-        }, 2000);
+        showToast(`Copied: ${txt}`);
       }catch(e){
-        if (window._infoRestoreTimeout == null) {
-          window._infoPrevText = $('info').textContent;
-        }
-        $('info').textContent = `Copy failed`;
-        if (window._infoRestoreTimeout) {
-          clearTimeout(window._infoRestoreTimeout);
-        }
-        window._infoRestoreTimeout = setTimeout(()=>{
-          $('info').textContent = window._infoPrevText || '';
-          window._infoRestoreTimeout = null;
-          window._infoPrevText = null;
-        }, 2000);
+        showToast(`Copy failed`);
       }
     });
     list.appendChild(li);
@@ -445,6 +442,7 @@ $('find').addEventListener('click', async ()=>{
   }
 
   $('info').textContent = 'Searching...';
+  $('search-progress').classList.remove('hidden');
   $('path-list').innerHTML = '';
   $('save-container').style.display = 'none';
   lastResult = null;
@@ -464,6 +462,7 @@ $('find').addEventListener('click', async ()=>{
     }catch(e){/*ignore*/}
   });
   es.addEventListener('result', (ev)=>{
+    $('search-progress').classList.add('hidden');
     try{
       const data = JSON.parse(ev.data);
       console.log('Result:', data);
@@ -503,6 +502,7 @@ $('find').addEventListener('click', async ()=>{
   });
   es.onerror = (ev)=>{
     // show network/stream error
+    $('search-progress').classList.add('hidden');
     console.error('Stream error:', ev);
     $('info').textContent = 'Stream error or connection closed';
     if(es){ es.close(); es = null; }
@@ -540,7 +540,7 @@ $('save-route').addEventListener('click', () => {
   };
   localStorage.setItem('plotter_routes', JSON.stringify(routes));
   updateSavedRoutesDropdown();
-  $('info').textContent = `Route saved: ${name}`;
+  showToast(`Route saved: ${name}`);
 });
 
 $('load-route').addEventListener('click', () => {
@@ -634,6 +634,7 @@ $('find-nearest').addEventListener('click', async ()=>{
     return;
   }
   $('info').textContent = 'Searching...';
+  $('search-progress').classList.remove('hidden');
   $('path-list').innerHTML = '';
   $('save-container').style.display = 'none';
   lastResult = null;
@@ -641,6 +642,7 @@ $('find-nearest').addEventListener('click', async ()=>{
   try {
     const params = new URLSearchParams({near, types});
     const res = await fetchWithTimeout(`/api/nearest?${params.toString()}`);
+    $('search-progress').classList.add('hidden');
     if (res.status === 502 || res.status === 504) {
       startWarmupSequence();
       return;
@@ -666,13 +668,16 @@ $('find-nearest').addEventListener('click', async ()=>{
         li.classList.add('highlight');
         try {
           await navigator.clipboard.writeText(data.name);
-          $('info').textContent = `Copied: ${data.name}`;
-        } catch(e) {}
+          showToast(`Copied: ${data.name}`);
+        } catch(e) {
+          showToast(`Copy failed`);
+        }
       });
       
       $('path-list').appendChild(li);
     }
   } catch(e) {
+    $('search-progress').classList.add('hidden');
     console.error(e);
     $('info').textContent = 'Error during search';
   }

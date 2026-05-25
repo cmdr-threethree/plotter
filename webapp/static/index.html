@@ -9,7 +9,10 @@
 </head>
 <body>
   <div id="app">
-    <div id="backend-status" class="status-bar hidden"></div>
+    <div id="backend-status" class="status-bar hidden">
+      <div class="status-text"></div>
+      <div class="progress-container"><div class="progress-bar"></div></div>
+    </div>
     <header>
       <h1>Plotter</h1>
       <button id="theme-toggle" class="icon-btn" title="Toggle dark/light mode">🌓</button>
@@ -73,6 +76,7 @@
 
       <section id="results">
         <h2>Results</h2>
+        <div id="search-progress" class="progress-container hidden" style="margin-bottom: 1em;"><div class="progress-bar indeterminate"></div></div>
         <div id="info"></div>
         <div id="save-container" style="display: none; margin-bottom: 1em;">
           <button id="save-route">💾 Save this route</button>
@@ -98,6 +102,7 @@
     </main>
     <footer>Flask + SPA demo</footer>
   </div>
+  <div id="toast-container"></div>
   <script src="app.js"></script>
 </body>
 </html>

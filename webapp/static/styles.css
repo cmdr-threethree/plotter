@@ -30,6 +30,11 @@
   --suggestion-box-border: #1e3a8a;
   --suggestion-box-text: #bfdbfe;
   --suggestion-box-strong: #eff6ff;
+  --progress-bg: #334155;
+  --progress-fill: #3b82f6;
+  --toast-bg: #1e293b;
+  --toast-text: #f8fafc;
+  --toast-border: #334155;
 }
 
 [data-theme="light"] {
@@ -64,6 +69,11 @@
   --suggestion-box-border: #bfdbfe;
   --suggestion-box-text: #1e40af;
   --suggestion-box-strong: #1e3a8a;
+  --progress-bg: #e2e8f0;
+  --progress-fill: #2563eb;
+  --toast-bg: #fff;
+  --toast-text: #111;
+  --toast-border: #ddd;
 }
 
 *{box-sizing:border-box;font-family:Inter,system-ui,Arial,sans-serif}
@@ -71,6 +81,63 @@ body{margin:0;background:var(--bg-body);color:var(--text-main);transition: backg
 #app{max-width:960px;margin:24px auto;padding:16px;background:var(--bg-app);border-radius:8px;box-shadow:var(--shadow)}
 header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 header h1{margin:0}
+
+/* Progress Bar Styles */
+.progress-container {
+    width: 100%;
+    height: 8px;
+    background: var(--progress-bg);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 8px;
+}
+.progress-bar {
+    height: 100%;
+    background: var(--progress-fill);
+    width: 0%;
+    transition: width 0.3s ease;
+}
+.progress-bar.indeterminate {
+    width: 30%;
+    animation: indeterminate 1.5s infinite linear;
+}
+@keyframes indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+}
+
+/* Toast Notification Styles */
+#toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 1000;
+}
+.toast {
+    background: var(--toast-bg);
+    color: var(--toast-text);
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--toast-border);
+    box-shadow: var(--shadow);
+    font-size: 14px;
+    animation: toast-in 0.3s ease-out forwards;
+}
+@keyframes toast-in {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+.toast.out {
+    animation: toast-out 0.3s ease-in forwards;
+}
+@keyframes toast-out {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}
+
 .icon-btn {
     background: transparent;
     border: 1px solid var(--border-color);
