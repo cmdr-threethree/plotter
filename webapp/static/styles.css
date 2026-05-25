@@ -35,6 +35,7 @@
   --toast-bg: #1e293b;
   --toast-text: #f8fafc;
   --toast-border: #334155;
+  --link-color: #60a5fa;
 }
 
 [data-theme="light"] {
@@ -74,10 +75,13 @@
   --toast-bg: #fff;
   --toast-text: #111;
   --toast-border: #ddd;
+  --link-color: #3b82f6;
 }
 
 *{box-sizing:border-box;font-family:Inter,system-ui,Arial,sans-serif}
 body{margin:0;background:var(--bg-body);color:var(--text-main);transition: background 0.3s, color 0.3s;}
+a{color:var(--link-color);text-decoration:none;transition:color 0.2s}
+a:hover{text-decoration:underline;filter:brightness(1.1)}
 #app{max-width:960px;margin:24px auto;padding:16px;background:var(--bg-app);border-radius:8px;box-shadow:var(--shadow)}
 header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 header h1{margin:0}
