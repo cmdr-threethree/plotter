@@ -155,6 +155,17 @@ header h1{margin:0}
 .row{display:flex;gap:8px;align-items:center}
 .row label{width:90px}
 .row input{flex:1;padding:8px;border:1px solid var(--border-color);border-radius:6px;background:var(--input-bg);color:var(--text-main)}
+
+/* Fix for browser autofill background/text colors in dark mode */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-text-fill-color: var(--text-main) !important;
+    -webkit-box-shadow: 0 0 0 30px var(--input-bg) inset !important;
+    transition: background-color 5000s ease-in-out 0s;
+}
+
 .row.small input{width:120px}
 button{padding:10px 14px;background:var(--btn-primary);color:var(--btn-text);border:none;border-radius:6px;cursor:pointer}
 button:active{transform:translateY(1px)}

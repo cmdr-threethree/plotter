@@ -382,7 +382,7 @@ function renderPath(data, maxHop) {
   data.path.forEach((p, i)=>{
     const li = document.createElement('li');
     const strong = document.createElement('strong');
-    strong.textContent = `${i+1}) ${p.name}`;
+    strong.textContent = p.name;
     li.appendChild(strong);
     const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) ${p.mainStar || ''} hop=${p.hop_dist.toFixed(1)} `);
     li.appendChild(meta);
@@ -531,7 +531,8 @@ function updateSavedRoutesDropdown() {
 
 $('save-route').addEventListener('click', () => {
   if (!lastResult) return;
-  const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)`;
+  const neutronFlag = currentParams.neutron_highway ? ' [Neutron]' : '';
+  const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)${neutronFlag}`;
   const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
   routes[name] = {
     params: currentParams,
