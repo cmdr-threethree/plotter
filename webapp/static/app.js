@@ -22,6 +22,35 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+function handlePlottingError(data) {
+  if (data.error === 'limit_exceeded') {
+    $('info').innerHTML = `<span style="color: #b91c1c; font-weight: bold;">Route exceeds limit of ${data.limit.toLocaleString()} ly</span><br/>Direct distance: ${data.dist.toFixed(0)} ly`;
+    if (data.suggestion) {
+      const div = document.createElement('div');
+      div.className = 'suggestion-box';
+      const typeStr = data.is_neutron ? 'Neutron Star' : 'system';
+      div.innerHTML = `<span>Try plotting to a ${typeStr} closer to the limit:</span><br/><strong>${data.suggestion.name}</strong> (~25k ly away)`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Use as Target';
+      btn.style.marginLeft = '12px';
+      btn.onclick = () => {
+        const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+        if (activeTab === 'carrier') {
+          $('carrier-target').value = data.suggestion.name;
+          $('carrier-find').click();
+        } else {
+          $('target').value = data.suggestion.name;
+          $('find').click();
+        }
+      };
+      div.appendChild(btn);
+      $('info').appendChild(div);
+    }
+  } else {
+    $('info').textContent = data.error;
+  }
+}
+
 $('carrier-find').addEventListener('click', async ()=>{
   if (!(await ensureBackendReady())) return;
 
@@ -57,7 +86,7 @@ $('carrier-find').addEventListener('click', async ()=>{
     try{
       const data = JSON.parse(ev.data);
       if(data.error){
-        $('info').textContent = data.error;
+        handlePlottingError(data);
       }else{
         lastSuccessTime = Date.now();
         lastResult = data;
@@ -529,10 +558,26 @@ function renderPath(data, maxHop, carrierParams = null) {
     list.appendChild(li);
   });
 
-  if (showFuel) {
-    const infoText = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Fuel: ${totalFuel} T`;
-    $('info').textContent = infoText;
-    if (currentTritium < 0) {
+  if (showFuel || isCarrier) {
+    const actualHops = data.path.length - 1;
+    const perfectHops = Math.ceil(data.total / 500);
+    
+    $('info').innerHTML = '';
+    $('info').appendChild(document.createTextNode(`Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly`));
+    
+    const efficiencySpan = document.createElement('span');
+    efficiencySpan.textContent = ` | Hops: ${actualHops} vs ${perfectHops} (Perfect)`;
+    efficiencySpan.title = "Theoretical minimum number of jumps if every hop was exactly 500ly (except the last).";
+    efficiencySpan.style.cursor = 'help';
+    efficiencySpan.style.borderBottom = '1px dotted #888';
+    efficiencySpan.style.marginLeft = '4px';
+    $('info').appendChild(efficiencySpan);
+
+    if (showFuel) {
+      $('info').appendChild(document.createTextNode(` | Fuel: ${totalFuel} T`));
+    }
+    
+    if (showFuel && currentTritium < 0) {
       const warn = document.createElement('span');
       warn.style.color = 'red';
       warn.style.fontWeight = 'bold';
@@ -617,26 +662,7 @@ $('find').addEventListener('click', async ()=>{
       const data = JSON.parse(ev.data);
       console.log('Result:', data);
       if(data.error){
-        if (data.error === 'limit_exceeded') {
-          $('info').innerHTML = `<span style="color: #b91c1c; font-weight: bold;">Route exceeds limit of ${data.limit.toLocaleString()} ly</span><br/>Direct distance: ${data.dist.toFixed(0)} ly`;
-          if (data.suggestion) {
-            const div = document.createElement('div');
-            div.className = 'suggestion-box';
-            const typeStr = data.is_neutron ? 'Neutron Star' : 'system';
-            div.innerHTML = `<span>Try plotting to a ${typeStr} closer to the limit:</span><br/><strong>${data.suggestion.name}</strong> (~25k ly away)`;
-            const btn = document.createElement('button');
-            btn.textContent = 'Use as Target';
-            btn.style.marginLeft = '12px';
-            btn.onclick = () => {
-              $('target').value = data.suggestion.name;
-              $('find').click();
-            };
-            div.appendChild(btn);
-            $('info').appendChild(div);
-          }
-        } else {
-          $('info').textContent = data.error;
-        }
+        handlePlottingError(data);
       }else{
         lastSuccessTime = Date.now();
         $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;
