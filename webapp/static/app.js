@@ -22,6 +22,61 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+$('carrier-find').addEventListener('click', async ()=>{
+  if (!(await ensureBackendReady())) return;
+
+  const source = $('carrier-source').value.trim();
+  const target = $('carrier-target').value.trim();
+  const max_hop = parseFloat($('carrier-max-hop').value) || 500;
+  const neutron_highway = false; // Carriers don't use neutron highway for plotting
+  
+  currentParams = {source, target, max_hop, neutron_highway};
+
+  if(!source || !target){
+    $('info').textContent = 'Enter both source and target';
+    return;
+  }
+
+  $('info').textContent = 'Searching...';
+  $('results').classList.remove('hidden');
+  $('search-progress').classList.remove('hidden');
+  $('path-list').innerHTML = '';
+  $('save-container').style.display = 'none';
+  lastResult = null;
+
+  if(es){ es.close(); es = null; }
+  const params = new URLSearchParams({source, target, max_hop, neutron_highway});
+  es = new EventSource(`/api/path/stream?${params.toString()}`);
+  es.addEventListener('progress', (ev)=>{
+    try{
+      $('info').textContent = ev.data;
+    }catch(e){/*ignore*/}
+  });
+  es.addEventListener('result', (ev)=>{
+    $('search-progress').classList.add('hidden');
+    try{
+      const data = JSON.parse(ev.data);
+      if(data.error){
+        $('info').textContent = data.error;
+      }else{
+        lastSuccessTime = Date.now();
+        lastResult = data;
+        $('save-container').style.display = 'block';
+        renderPath(data, max_hop, getCarrierParams());
+      }
+    }catch(e){
+      $('info').textContent = 'Error parsing result';
+    }finally{
+      if(es){ es.close(); es = null; }
+    }
+  });
+  es.onerror = (ev)=>{
+    $('search-progress').classList.add('hidden');
+    $('info').textContent = 'Stream error or connection closed';
+    if(es){ es.close(); es = null; }
+  };
+});
+
 // Theme Toggle Logic
 function setTheme(theme, persist = true) {
   document.documentElement.setAttribute('data-theme', theme);
@@ -275,6 +330,8 @@ function setupSuggestionInput(inputId, suggestionId, checkCoords = false) {
 setupSuggestionInput("source", "src-suggestions");
 setupSuggestionInput("target", "tgt-suggestions");
 setupSuggestionInput("near", "near-suggestions", true);
+setupSuggestionInput("carrier-source", "carrier-src-suggestions");
+setupSuggestionInput("carrier-target", "carrier-tgt-suggestions");
 
 // Star Type Selector Implementation
 const ALL_STAR_TYPES = [
@@ -394,19 +451,45 @@ $('reverse').addEventListener('click', ()=>{
   $('target').value = s;
 });
 
+$('carrier-reverse').addEventListener('click', ()=>{
+  const s = $('carrier-source').value;
+  $('carrier-source').value = $('carrier-target').value;
+  $('carrier-target').value = s;
+});
+
 let es = null;
 let lastResult = null;
 let currentParams = {};
 
-function renderPath(data, maxHop) {
+function renderPath(data, maxHop, carrierParams = null) {
   const list = $('path-list');
   list.innerHTML = '';
+  
+  let totalFuel = 0;
+  let currentTritium = carrierParams ? carrierParams.tritium : 0;
+  let showFuel = carrierParams && !carrierParams.isEmpty;
+
+  // Determine if we should treat this as a carrier route (to hide star types)
+  const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+  const savedRouteName = $('saved-routes-list').value;
+  const isCarrier = activeTab === 'carrier' || (savedRouteName && savedRouteName.includes('[Carrier]'));
+
   data.path.forEach((p, i)=>{
     const li = document.createElement('li');
     const strong = document.createElement('strong');
     strong.textContent = p.name;
     li.appendChild(strong);
-    const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) ${p.mainStar || ''} hop=${p.hop_dist.toFixed(1)} `);
+    
+    let fuelText = '';
+    if (showFuel && i > 0) {
+      const fuel = Math.ceil(5 + p.hop_dist * (carrierParams.cargo + currentTritium + 25000) / 200000);
+      totalFuel += fuel;
+      currentTritium -= fuel;
+      fuelText = ` | ⛽ ${fuel}T (Rem: ${currentTritium}T)`;
+    }
+
+    const starInfo = isCarrier ? '' : ` ${p.mainStar || ''}`;
+    const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)})${starInfo} hop=${p.hop_dist.toFixed(1)}${fuelText} `);
     li.appendChild(meta);
     if(p.needs_permit){
       const warn = document.createElement('strong');
@@ -445,7 +528,51 @@ function renderPath(data, maxHop) {
     });
     list.appendChild(li);
   });
+
+  if (showFuel) {
+    const infoText = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Fuel: ${totalFuel} T`;
+    $('info').textContent = infoText;
+    if (currentTritium < 0) {
+      const warn = document.createElement('span');
+      warn.style.color = 'red';
+      warn.style.fontWeight = 'bold';
+      warn.style.marginLeft = '8px';
+      warn.textContent = '[Out of fuel!]';
+      $('info').appendChild(warn);
+    }
+  } else {
+    $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;
+  }
 }
+
+function getCarrierParams() {
+  const cargoStr = $('carrier-cargo').value.trim();
+  const tritiumStr = $('carrier-tritium').value.trim();
+  
+  if (cargoStr === '' && tritiumStr === '') return { cargo: 0, tritium: 0, isEmpty: true };
+
+  let cargo = parseFloat(cargoStr) || 0;
+  let tritium = parseFloat(tritiumStr) || 0;
+  
+  // Enforce constraints
+  if (cargo < 0) cargo = 0;
+  if (cargo > 25000) cargo = 25000;
+  if (tritium < 0) tritium = 0;
+  if (tritium > 1000) tritium = 1000;
+  
+  return { cargo, tritium, isEmpty: false };
+}
+
+$('carrier-cargo').addEventListener('input', () => {
+  if (lastResult) {
+    renderPath(lastResult, currentParams.max_hop, getCarrierParams());
+  }
+});
+$('carrier-tritium').addEventListener('input', () => {
+  if (lastResult) {
+    renderPath(lastResult, currentParams.max_hop, getCarrierParams());
+  }
+});
 
 $('find').addEventListener('click', async ()=>{
   if (!(await ensureBackendReady())) return;
@@ -555,10 +682,19 @@ function updateSavedRoutesDropdown() {
 $('save-route').addEventListener('click', () => {
   if (!lastResult) return;
   const neutronFlag = currentParams.neutron_highway ? ' [Neutron]' : '';
-  const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)${neutronFlag}`;
+  
+  // Determine if we are currently in the Carrier tab
+  const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+  const carrierFlag = activeTab === 'carrier' ? ' [Carrier]' : '';
+  
+  const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)${neutronFlag}${carrierFlag}`;
   const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+  
+  const carrierParams = activeTab === 'carrier' ? getCarrierParams() : null;
+
   routes[name] = {
     params: currentParams,
+    carrierParams: carrierParams,
     result: lastResult,
     timestamp: Date.now()
   };
@@ -573,16 +709,31 @@ $('load-route').addEventListener('click', () => {
   const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
   const route = routes[name];
   if (route) {
-    $('source').value = route.params.source;
-    $('target').value = route.params.target;
-    $('max-hop').value = route.params.max_hop;
-    currentParams = route.params;
+    if (name.includes('[Carrier]')) {
+      $('carrier-source').value = route.params.source;
+      $('carrier-target').value = route.params.target;
+      $('carrier-max-hop').value = route.params.max_hop;
+      if (route.carrierParams) {
+        $('carrier-cargo').value = (route.carrierParams.cargo !== undefined && route.carrierParams.cargo !== null) ? route.carrierParams.cargo : '';
+        $('carrier-tritium').value = (route.carrierParams.tritium !== undefined && route.carrierParams.tritium !== null) ? route.carrierParams.tritium : '';
+      }
+      document.querySelector('[data-tab="carrier"]').click();
+    } else {
+      $('source').value = route.params.source;
+      $('target').value = route.params.target;
+      $('max-hop').value = route.params.max_hop;
+      if ($('neutron-highway')) {
+        $('neutron-highway').checked = route.params.neutron_highway;
+      }
+      document.querySelector('[data-tab="plotter"]').click();
+    }
+    
+    currentParams = { ...route.params };
     lastResult = route.result;
     
-    $('info').textContent = `Loaded: Total: ${lastResult.total.toFixed(1)} ly | Direct: ${lastResult.direct.toFixed(1)} ly | Diff: +${lastResult.diff_pct.toFixed(1)}%`;
     $('results').classList.remove('hidden');
     $('save-container').style.display = 'block';
-    renderPath(lastResult, route.params.max_hop);
+    renderPath(lastResult, route.params.max_hop, getCarrierParams());
   }
 });
 

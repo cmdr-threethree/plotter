@@ -21,6 +21,7 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="home">🏠 Home</button>
       <button class="tab-btn" data-tab="plotter">🚀 Plotter</button>
+      <button class="tab-btn" data-tab="carrier">🚢 Carrier</button>
       <button class="tab-btn" data-tab="search">🔍 Search</button>
       <button class="tab-btn" data-tab="library">📚 Library</button>
     </nav>
@@ -83,6 +84,40 @@
           </div>
           <div class="row">
             <button id="find">Find path</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Carrier Tab -->
+      <section id="carrier-tab" class="tab-content">
+        <div class="controls">
+          <div class="row">
+            <label>Source</label>
+            <input id="carrier-source" placeholder="system name or id64" />
+            <div id="carrier-src-suggestions" class="suggestions"></div>
+          </div>
+          <div class="row" style="text-align: center;">
+            <button id="carrier-reverse" title="Swap source and target">⇅ Reverse</button>
+          </div>
+          <div class="row">
+            <label>Target</label>
+            <input id="carrier-target" placeholder="system name or id64" />
+            <div id="carrier-tgt-suggestions" class="suggestions"></div>
+          </div>
+          <div class="row small">
+            <label>Max hop</label>
+            <input id="carrier-max-hop" type="number" value="500" />
+          </div>
+          <div class="row small">
+            <label>Used Cargo</label>
+            <input id="carrier-cargo" type="number" placeholder="0-25000" min="0" max="25000" />
+          </div>
+          <div class="row small">
+            <label>Tritium in Tank</label>
+            <input id="carrier-tritium" type="number" placeholder="0-1000" min="0" max="1000" />
+          </div>
+          <div class="row">
+            <button id="carrier-find">Find path</button>
           </div>
         </div>
       </section>
