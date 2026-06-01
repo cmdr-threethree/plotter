@@ -1,4 +1,99 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
 const $ = (id) => document.getElementById(id);
+
+class GalaxyView {
+  constructor(containerId) {
+    this.container = $(containerId);
+    this.init();
+  }
+
+  init() {
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x020617);
+    
+    this.camera = new THREE.PerspectiveCamera(60, this.container.clientWidth / 400, 1, 1000000);
+    this.camera.position.set(0, 1000, 2000);
+    
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setSize(this.container.clientWidth, 400);
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.container.appendChild(this.renderer.domElement);
+    
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    
+    // Add grid for galactic plane
+    const grid = new THREE.GridHelper(100000, 100, 0x1e293b, 0x0f172a);
+    this.scene.add(grid);
+
+    this.route = new THREE.Group();
+    this.scene.add(this.route);
+
+    window.addEventListener('resize', () => this.onResize());
+    this.animate();
+  }
+
+  onResize() {
+    this.camera.aspect = this.container.clientWidth / 400;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(this.container.clientWidth, 400);
+  }
+
+  animate() {
+    requestAnimationFrame(() => this.animate());
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  clear() {
+    while(this.route.children.length > 0) {
+      const child = this.route.children[0];
+      child.geometry.dispose();
+      child.material.dispose();
+      this.route.remove(child);
+    }
+  }
+
+  addRoute(path) {
+    const points = [];
+    path.forEach(node => {
+      // Negate Z because Elite Z+ (North) should point 'Away' (Three.js Z-)
+      points.push(new THREE.Vector3(node.coords.x, node.coords.y, -node.coords.z));
+    });
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({ color: 0x22d3ee, linewidth: 3 });
+    const line = new THREE.Line(geometry, material);
+    line.renderOrder = 1;
+    this.route.add(line);
+
+    // Add glowing spheres for route nodes
+    path.forEach(node => {
+      const sphereGeom = new THREE.SphereGeometry(25, 8, 8);
+      const color = node.is_neutron ? 0x22d3ee : 0x3b82f6;
+      const sphereMat = new THREE.MeshBasicMaterial({ 
+        color: color,
+        transparent: true,
+        opacity: 0.9
+      });
+      const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+      sphere.position.set(node.coords.x, node.coords.y, -node.coords.z);
+      sphere.renderOrder = 2;
+      this.route.add(sphere);
+    });
+
+    // Auto-focus on route start
+    if (path.length > 0) {
+      const start = path[0].coords;
+      this.camera.position.set(start.x, start.y + 1000, -start.z + 2000);
+      this.controls.target.set(start.x, start.y, -start.z);
+    }
+  }
+}
+
+let galaxyView = null;
 
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -74,6 +169,8 @@ $('carrier-find').addEventListener('click', async ()=>{
   lastResult = null;
 
   if(es){ es.close(); es = null; }
+  if(galaxyView) galaxyView.clear();
+
   const params = new URLSearchParams({source, target, max_hop, neutron_highway});
   es = new EventSource(`/api/path/stream?${params.toString()}`);
   es.addEventListener('progress', (ev)=>{
@@ -177,11 +274,9 @@ async function fetchWithTimeout(resource, options = {}) {
     return response;
   } catch (error) {
     if (error.name === 'AbortError') {
-      // If the external signal was aborted, it's a manual cancellation
       if (signal && signal.aborted) {
-        throw error; // Re-throw to be handled as manual abort
+        throw error;
       }
-      // Otherwise, it was our internal timeout
       const timeoutError = new Error('Request timed out');
       timeoutError.name = 'TimeoutError';
       throw timeoutError;
@@ -252,20 +347,17 @@ function startWarmupSequence() {
 }
 
 async function ensureBackendReady() {
-  // Optimistic 5-minute health cache
   if (Date.now() - lastSuccessTime < 300000) {
     return true;
   }
   
   try {
-    // Fast 2-second pre-flight check
     const res = await fetchWithTimeout('/api/health', { timeout: 2000 });
     if (res.ok) {
       lastSuccessTime = Date.now();
       return true;
     }
   } catch (e) {
-    // Timeout or error, start warmup
   }
   
   startWarmupSequence();
@@ -277,7 +369,6 @@ let searchController = null;
 async function search(q) {
   if (!q || q.length < 3) return [];
 
-  // Cancel any pending search
   if (searchController) {
     searchController.abort();
   }
@@ -286,10 +377,9 @@ async function search(q) {
   try {
     const res = await fetchWithTimeout(`/api/search?q=${encodeURIComponent(q)}`, {
       signal: searchController.signal,
-      timeout: 3000 // Short timeout for suggestions
+      timeout: 3000 
     });
     if (res.status === 502 || res.status === 504) {
-      console.warn("Search: backend warming up (502/504)");
       startWarmupSequence();
       return [];
     }
@@ -298,11 +388,8 @@ async function search(q) {
     return await res.json();
   } catch (err) {
     if (err.name === "AbortError") {
-      return null; // Manual cancellation, do nothing
+      return null;
     }
-    
-    // TimeoutError or other network errors
-    console.warn("Search error (triggering warmup):", err);
     startWarmupSequence();
     return [];
   }
@@ -311,7 +398,6 @@ async function search(q) {
 function renderSuggestions(container, items) {
   container.innerHTML = "";
   if (!items || items.length === 0) {
-    // show explicit no-matches message when user typed something
     const input = container.previousElementSibling;
     if (input && input.value && input.value.trim().length >= 3) {
       const no = document.createElement("div");
@@ -350,7 +436,7 @@ function setupSuggestionInput(inputId, suggestionId, checkCoords = false) {
         return;
       }
       const items = await search(v);
-      if (items === null) return; // Stale request, do nothing
+      if (items === null) return; 
       renderSuggestions($(suggestionId), items);
     }, 500);
   });
@@ -493,12 +579,15 @@ let currentParams = {};
 function renderPath(data, maxHop, carrierParams = null) {
   const list = $('path-list');
   list.innerHTML = '';
+
+  if (galaxyView) {
+    galaxyView.addRoute(data.path);
+  }
   
   let totalFuel = 0;
   let currentTritium = carrierParams ? carrierParams.tritium : 0;
   let showFuel = carrierParams && !carrierParams.isEmpty;
 
-  // Determine if we should treat this as a carrier route (to hide star types)
   const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
   const savedRouteName = $('saved-routes-list').value;
   const isCarrier = activeTab === 'carrier' || (savedRouteName && savedRouteName.includes('[Carrier]'));
@@ -534,7 +623,6 @@ function renderPath(data, maxHop, carrierParams = null) {
     li.style.cursor = 'pointer';
     li.title = 'Click to copy system name';
     li.addEventListener('click', async ()=>{
-      // Clear previous highlight
       document.querySelectorAll('#path-list li').forEach(el => el.classList.remove('highlight'));
       li.classList.add('highlight');
 
@@ -599,7 +687,6 @@ function getCarrierParams() {
   let cargo = parseFloat(cargoStr) || 0;
   let tritium = parseFloat(tritiumStr) || 0;
   
-  // Enforce constraints
   if (cargo < 0) cargo = 0;
   if (cargo > 25000) cargo = 25000;
   if (tritium < 0) tritium = 0;
@@ -629,7 +716,6 @@ $('find').addEventListener('click', async ()=>{
   
   currentParams = {source, target, max_hop, neutron_highway};
 
-  // basic validation
   if(!source || !target){
     $('info').textContent = 'Enter both source and target';
     return;
@@ -642,17 +728,17 @@ $('find').addEventListener('click', async ()=>{
   $('save-container').style.display = 'none';
   lastResult = null;
 
-  // close previous EventSource if any
   if(es){
     es.close();
     es = null;
   }
+  if(galaxyView) galaxyView.clear();
+
   const params = new URLSearchParams({source, target, max_hop, neutron_highway});
   es = new EventSource(`/api/path/stream?${params.toString()}`);
   es.addEventListener('progress', (ev)=>{
     try{
       const txt = ev.data;
-      console.log(txt);
       $('info').textContent = txt;
     }catch(e){/*ignore*/}
   });
@@ -660,7 +746,6 @@ $('find').addEventListener('click', async ()=>{
     $('search-progress').classList.add('hidden');
     try{
       const data = JSON.parse(ev.data);
-      console.log('Result:', data);
       if(data.error){
         handlePlottingError(data);
       }else{
@@ -677,9 +762,7 @@ $('find').addEventListener('click', async ()=>{
     }
   });
   es.onerror = (ev)=>{
-    // show network/stream error
     $('search-progress').classList.add('hidden');
-    console.error('Stream error:', ev);
     $('info').textContent = 'Stream error or connection closed';
     if(es){ es.close(); es = null; }
   };
@@ -708,14 +791,10 @@ function updateSavedRoutesDropdown() {
 $('save-route').addEventListener('click', () => {
   if (!lastResult) return;
   const neutronFlag = currentParams.neutron_highway ? ' [Neutron]' : '';
-  
-  // Determine if we are currently in the Carrier tab
   const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
   const carrierFlag = activeTab === 'carrier' ? ' [Carrier]' : '';
-  
   const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)${neutronFlag}${carrierFlag}`;
   const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
-  
   const carrierParams = activeTab === 'carrier' ? getCarrierParams() : null;
 
   routes[name] = {
@@ -759,6 +838,7 @@ $('load-route').addEventListener('click', () => {
     
     $('results').classList.remove('hidden');
     $('save-container').style.display = 'block';
+    if(galaxyView) galaxyView.clear();
     renderPath(lastResult, route.params.max_hop, getCarrierParams());
   }
 });
@@ -804,25 +884,19 @@ $('import-file').addEventListener('change', (e) => {
     try {
       const data = JSON.parse(ev.target.result);
       const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
-      
-      // Check if it's a single route or multiple
       if (data.params && data.result) {
-        // Single route
         const name = `${data.params.source} -> ${data.params.target} (${data.params.max_hop}ly) [Imported]`;
         routes[name] = data;
       } else {
-        // Assume collection of routes
         Object.assign(routes, data);
       }
-      
       localStorage.setItem('plotter_routes', JSON.stringify(routes));
       updateSavedRoutesDropdown();
       alert('Routes imported successfully');
     } catch (err) {
       alert('Failed to import: Invalid JSON file');
-      console.error(err);
     }
-    e.target.value = ''; // Reset input
+    e.target.value = ''; 
   };
   reader.readAsText(file);
 });
@@ -851,7 +925,6 @@ $('find-nearest').addEventListener('click', async ()=>{
       return;
     }
     const data = await res.json();
-    console.log('Nearest Result:', data);
     if(data.error){
       $('info').textContent = data.error;
     }else{
@@ -881,7 +954,6 @@ $('find-nearest').addEventListener('click', async ()=>{
     }
   } catch(e) {
     $('search-progress').classList.add('hidden');
-    console.error(e);
     $('info').textContent = 'Error during search';
   }
 });
@@ -891,28 +963,20 @@ updateSavedRoutesDropdown();
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then(reg => {
-      console.log('SW registered:', reg);
-      
-      // Check for updates on load
       reg.update();
-
       reg.addEventListener('updatefound', () => {
         const newWorker = reg.installing;
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // New content is available; please refresh.
             if (confirm('A new version of the Plotter is available. Update now?')) {
               location.reload();
             }
           }
         });
       });
-    }).catch(err => {
-      console.log('SW registration failed:', err);
     });
   });
 
-  // Handle controller change (e.g. after skipWaiting)
   let refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return;
@@ -920,3 +984,34 @@ if ('serviceWorker' in navigator) {
     window.location.reload();
   });
 }
+
+// 3D Visualizer UI Handlers
+$('toggle-3d').addEventListener('click', () => {
+  $('visualizer-container').classList.remove('hidden');
+  $('toggle-3d').classList.add('hidden');
+  if (!galaxyView) {
+    galaxyView = new GalaxyView('three-viewport');
+  }
+  if (lastResult) {
+    galaxyView.clear();
+    galaxyView.addRoute(lastResult.path);
+  }
+});
+
+$('close-3d').addEventListener('click', () => {
+  $('visualizer-container').classList.add('hidden');
+  $('toggle-3d').classList.remove('hidden');
+});
+
+$('reset-camera').addEventListener('click', () => {
+  if (galaxyView) {
+    if (lastResult && lastResult.path.length > 0) {
+      const start = lastResult.path[0].coords;
+      galaxyView.camera.position.set(start.x, start.y + 1000, -start.z + 2000);
+      galaxyView.controls.target.set(start.x, start.y, -start.z);
+    } else {
+      galaxyView.camera.position.set(0, 1000, 2000);
+      galaxyView.controls.target.set(0, 0, 0);
+    }
+  }
+});

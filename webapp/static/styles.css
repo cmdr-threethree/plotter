@@ -345,3 +345,17 @@ button:disabled {
     font-size: 13px;
     padding: 6px 10px;
 }
+
+/* 3D Visualizer Styles */
+#three-viewport canvas {
+  display: block;
+}
+
+.visualizer-controls {
+  padding: 8px 0;
+}
+
+.visualizer-controls .preset-btn {
+  padding: 6px 12px;
+  font-weight: 600;
+}
