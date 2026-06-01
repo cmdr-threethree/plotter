@@ -1,4 +1,189 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
 const $ = (id) => document.getElementById(id);
+
+class GalaxyView {
+  constructor(containerId) {
+    this.container = $(containerId);
+    this.init();
+  }
+
+  init() {
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x020617);
+    
+    this.camera = new THREE.PerspectiveCamera(60, this.container.clientWidth / 400, 1, 1000000);
+    this.camera.position.set(0, 1000, 2000);
+    
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setSize(this.container.clientWidth, 400);
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.container.appendChild(this.renderer.domElement);
+    
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    
+    // Add grid for galactic plane
+    const grid = new THREE.GridHelper(100000, 100, 0x1e293b, 0x0f172a);
+    this.scene.add(grid);
+
+    this.route = new THREE.Group();
+    this.scene.add(this.route);
+
+    this.labels = new THREE.Group();
+    this.scene.add(this.labels);
+
+    this.anchors = new THREE.Group();
+    this.scene.add(this.anchors);
+    this.anchorNames = ['Sol', 'Colonia', 'Sagittarius A*', 'Beagle Point'];
+    this.initAnchors();
+
+    window.addEventListener('resize', () => this.onResize());
+    this.animate();
+  }
+
+  initAnchors() {
+    const systems = [
+      { name: 'Sol', x: 0, y: 0, z: 0 },
+      { name: 'Colonia', x: -9530.5, y: -910.3, z: 19808.1 },
+      { name: 'Sagittarius A*', x: 25.2, y: -20.9, z: 25900.0 },
+      { name: 'Beagle Point', x: -1111.5625, y: -134.21875, z: 65269.75 },
+    ];
+
+    systems.forEach(s => {
+      const sprite = this.createLabel(s.name, s.x, s.y, -s.z, '#475569');
+      this.anchors.add(sprite);
+      
+      // Add a small point for the anchor
+      const geom = new THREE.SphereGeometry(50, 8, 8);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.5 });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.set(s.x, s.y, -s.z);
+      this.anchors.add(mesh);
+    });
+  }
+
+  createLabel(text, x, y, z, color = '#22d3ee') {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 512;
+    canvas.height = 128;
+    
+    ctx.font = 'Bold 48px Inter, Arial, sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Draw text with a subtle glow/shadow for readability
+    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+    ctx.shadowBlur = 8;
+    ctx.fillText(text, 256, 64);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(x, y + 600, z); // Offset label above point
+    sprite.scale.set(5000, 1250, 1);
+    return sprite;
+  }
+
+  onResize() {
+    this.camera.aspect = this.container.clientWidth / 400;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(this.container.clientWidth, 400);
+  }
+
+  animate() {
+    requestAnimationFrame(() => this.animate());
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  clear() {
+    while(this.route.children.length > 0) {
+      const child = this.route.children[0];
+      child.geometry.dispose();
+      child.material.dispose();
+      this.route.remove(child);
+    }
+    while(this.labels.children.length > 0) {
+      const child = this.labels.children[0];
+      if (child.material && child.material.map) child.material.map.dispose();
+      if (child.material) child.material.dispose();
+      this.labels.remove(child);
+    }
+  }
+
+  addRoute(path) {
+    if (!path || path.length === 0) return;
+    const points = [];
+    path.forEach(node => {
+      // Negate Z because Elite Z+ (North) should point 'Away' (Three.js Z-)
+      points.push(new THREE.Vector3(node.coords.x, node.coords.y, -node.coords.z));
+    });
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const material = new THREE.LineBasicMaterial({ color: 0x22d3ee, linewidth: 3 });
+    const line = new THREE.Line(geometry, material);
+    line.renderOrder = 1;
+    this.route.add(line);
+
+    // Add glowing spheres for route nodes
+    path.forEach(node => {
+      const sphereGeom = new THREE.SphereGeometry(25, 8, 8);
+      const color = node.is_neutron ? 0x22d3ee : 0x3b82f6;
+      const sphereMat = new THREE.MeshBasicMaterial({ 
+        color: color,
+        transparent: true,
+        opacity: 0.9
+      });
+      const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+      sphere.position.set(node.coords.x, node.coords.y, -node.coords.z);
+      sphere.renderOrder = 2;
+      this.route.add(sphere);
+    });
+
+    // Add labels for source and target with deduplication
+    const source = path[0];
+    const target = path[path.length - 1];
+
+    if (!this.anchorNames.includes(source.name)) {
+      this.labels.add(this.createLabel(source.name, source.coords.x, source.coords.y, -source.coords.z));
+    }
+    
+    if (target !== source && !this.anchorNames.includes(target.name)) {
+      this.labels.add(this.createLabel(target.name, target.coords.x, target.coords.y, -target.coords.z));
+    }
+
+    this.frameRoute(path);
+  }
+
+  frameRoute(path) {
+    if (!path || path.length === 0) {
+      this.camera.position.set(0, 1000, 2000);
+      this.controls.target.set(0, 0, 0);
+      return;
+    }
+
+    const bbox = new THREE.Box3();
+    path.forEach(node => {
+      bbox.expandByPoint(new THREE.Vector3(node.coords.x, node.coords.y, -node.coords.z));
+    });
+
+    const center = new THREE.Vector3();
+    bbox.getCenter(center);
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    
+    const zoomAmount = Math.max(2000, maxDim * 1.5);
+    this.camera.position.set(center.x, center.y + zoomAmount * 0.5, center.z + zoomAmount);
+    this.controls.target.copy(center);
+  }
+}
+
+let galaxyView = null;
 
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -20,6 +205,92 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
       $('results').classList.remove('hidden');
     }
   });
+});
+
+function handlePlottingError(data) {
+  if (data.error === 'limit_exceeded') {
+    $('info').innerHTML = `<span style="color: #b91c1c; font-weight: bold;">Route exceeds limit of ${data.limit.toLocaleString()} ly</span><br/>Direct distance: ${data.dist.toFixed(0)} ly`;
+    if (data.suggestion) {
+      const div = document.createElement('div');
+      div.className = 'suggestion-box';
+      const typeStr = data.is_neutron ? 'Neutron Star' : 'system';
+      div.innerHTML = `<span>Try plotting to a ${typeStr} closer to the limit:</span><br/><strong>${data.suggestion.name}</strong> (~25k ly away)`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Use as Target';
+      btn.style.marginLeft = '12px';
+      btn.onclick = () => {
+        const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+        if (activeTab === 'carrier') {
+          $('carrier-target').value = data.suggestion.name;
+          $('carrier-find').click();
+        } else {
+          $('target').value = data.suggestion.name;
+          $('find').click();
+        }
+      };
+      div.appendChild(btn);
+      $('info').appendChild(div);
+    }
+  } else {
+    $('info').textContent = data.error;
+  }
+}
+
+$('carrier-find').addEventListener('click', async ()=>{
+  if (!(await ensureBackendReady())) return;
+
+  const source = $('carrier-source').value.trim();
+  const target = $('carrier-target').value.trim();
+  const max_hop = parseFloat($('carrier-max-hop').value) || 500;
+  const neutron_highway = false; // Carriers don't use neutron highway for plotting
+  
+  currentParams = {source, target, max_hop, neutron_highway};
+
+  if(!source || !target){
+    $('info').textContent = 'Enter both source and target';
+    return;
+  }
+
+  $('info').textContent = 'Searching...';
+  $('results').classList.remove('hidden');
+  $('search-progress').classList.remove('hidden');
+  $('path-list').innerHTML = '';
+  $('save-container').style.display = 'none';
+  lastResult = null;
+
+  if(es){ es.close(); es = null; }
+  if(galaxyView) galaxyView.clear();
+
+  const params = new URLSearchParams({source, target, max_hop, neutron_highway});
+  es = new EventSource(`/api/path/stream?${params.toString()}`);
+  es.addEventListener('progress', (ev)=>{
+    try{
+      $('info').textContent = ev.data;
+    }catch(e){/*ignore*/}
+  });
+  es.addEventListener('result', (ev)=>{
+    $('search-progress').classList.add('hidden');
+    try{
+      const data = JSON.parse(ev.data);
+      if(data.error){
+        handlePlottingError(data);
+      }else{
+        lastSuccessTime = Date.now();
+        lastResult = data;
+        $('save-container').style.display = 'block';
+        renderPath(data, max_hop, getCarrierParams());
+      }
+    }catch(e){
+      $('info').textContent = 'Error parsing result';
+    }finally{
+      if(es){ es.close(); es = null; }
+    }
+  });
+  es.onerror = (ev)=>{
+    $('search-progress').classList.add('hidden');
+    $('info').textContent = 'Stream error or connection closed';
+    if(es){ es.close(); es = null; }
+  };
 });
 
 // Theme Toggle Logic
@@ -93,11 +364,9 @@ async function fetchWithTimeout(resource, options = {}) {
     return response;
   } catch (error) {
     if (error.name === 'AbortError') {
-      // If the external signal was aborted, it's a manual cancellation
       if (signal && signal.aborted) {
-        throw error; // Re-throw to be handled as manual abort
+        throw error;
       }
-      // Otherwise, it was our internal timeout
       const timeoutError = new Error('Request timed out');
       timeoutError.name = 'TimeoutError';
       throw timeoutError;
@@ -168,20 +437,17 @@ function startWarmupSequence() {
 }
 
 async function ensureBackendReady() {
-  // Optimistic 5-minute health cache
   if (Date.now() - lastSuccessTime < 300000) {
     return true;
   }
   
   try {
-    // Fast 2-second pre-flight check
     const res = await fetchWithTimeout('/api/health', { timeout: 2000 });
     if (res.ok) {
       lastSuccessTime = Date.now();
       return true;
     }
   } catch (e) {
-    // Timeout or error, start warmup
   }
   
   startWarmupSequence();
@@ -193,7 +459,6 @@ let searchController = null;
 async function search(q) {
   if (!q || q.length < 3) return [];
 
-  // Cancel any pending search
   if (searchController) {
     searchController.abort();
   }
@@ -202,10 +467,9 @@ async function search(q) {
   try {
     const res = await fetchWithTimeout(`/api/search?q=${encodeURIComponent(q)}`, {
       signal: searchController.signal,
-      timeout: 3000 // Short timeout for suggestions
+      timeout: 3000 
     });
     if (res.status === 502 || res.status === 504) {
-      console.warn("Search: backend warming up (502/504)");
       startWarmupSequence();
       return [];
     }
@@ -214,11 +478,8 @@ async function search(q) {
     return await res.json();
   } catch (err) {
     if (err.name === "AbortError") {
-      return null; // Manual cancellation, do nothing
+      return null;
     }
-    
-    // TimeoutError or other network errors
-    console.warn("Search error (triggering warmup):", err);
     startWarmupSequence();
     return [];
   }
@@ -227,7 +488,6 @@ async function search(q) {
 function renderSuggestions(container, items) {
   container.innerHTML = "";
   if (!items || items.length === 0) {
-    // show explicit no-matches message when user typed something
     const input = container.previousElementSibling;
     if (input && input.value && input.value.trim().length >= 3) {
       const no = document.createElement("div");
@@ -266,7 +526,7 @@ function setupSuggestionInput(inputId, suggestionId, checkCoords = false) {
         return;
       }
       const items = await search(v);
-      if (items === null) return; // Stale request, do nothing
+      if (items === null) return; 
       renderSuggestions($(suggestionId), items);
     }, 500);
   });
@@ -275,6 +535,8 @@ function setupSuggestionInput(inputId, suggestionId, checkCoords = false) {
 setupSuggestionInput("source", "src-suggestions");
 setupSuggestionInput("target", "tgt-suggestions");
 setupSuggestionInput("near", "near-suggestions", true);
+setupSuggestionInput("carrier-source", "carrier-src-suggestions");
+setupSuggestionInput("carrier-target", "carrier-tgt-suggestions");
 
 // Star Type Selector Implementation
 const ALL_STAR_TYPES = [
@@ -394,19 +656,48 @@ $('reverse').addEventListener('click', ()=>{
   $('target').value = s;
 });
 
+$('carrier-reverse').addEventListener('click', ()=>{
+  const s = $('carrier-source').value;
+  $('carrier-source').value = $('carrier-target').value;
+  $('carrier-target').value = s;
+});
+
 let es = null;
 let lastResult = null;
 let currentParams = {};
 
-function renderPath(data, maxHop) {
+function renderPath(data, maxHop, carrierParams = null) {
   const list = $('path-list');
   list.innerHTML = '';
+
+  if (galaxyView) {
+    galaxyView.addRoute(data.path);
+  }
+  
+  let totalFuel = 0;
+  let currentTritium = carrierParams ? carrierParams.tritium : 0;
+  let showFuel = carrierParams && !carrierParams.isEmpty;
+
+  const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+  const savedRouteName = $('saved-routes-list').value;
+  const isCarrier = activeTab === 'carrier' || (savedRouteName && savedRouteName.includes('[Carrier]'));
+
   data.path.forEach((p, i)=>{
     const li = document.createElement('li');
     const strong = document.createElement('strong');
     strong.textContent = p.name;
     li.appendChild(strong);
-    const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)}) ${p.mainStar || ''} hop=${p.hop_dist.toFixed(1)} `);
+    
+    let fuelText = '';
+    if (showFuel && i > 0) {
+      const fuel = Math.ceil(5 + p.hop_dist * (carrierParams.cargo + currentTritium + 25000) / 200000);
+      totalFuel += fuel;
+      currentTritium -= fuel;
+      fuelText = ` | ⛽ ${fuel}T (Rem: ${currentTritium}T)`;
+    }
+
+    const starInfo = isCarrier ? '' : ` ${p.mainStar || ''}`;
+    const meta = document.createTextNode(` ${p.id64} (${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}, ${p.coords.z.toFixed(1)})${starInfo} hop=${p.hop_dist.toFixed(1)}${fuelText} `);
     li.appendChild(meta);
     if(p.needs_permit){
       const warn = document.createElement('strong');
@@ -422,7 +713,6 @@ function renderPath(data, maxHop) {
     li.style.cursor = 'pointer';
     li.title = 'Click to copy system name';
     li.addEventListener('click', async ()=>{
-      // Clear previous highlight
       document.querySelectorAll('#path-list li').forEach(el => el.classList.remove('highlight'));
       li.classList.add('highlight');
 
@@ -445,7 +735,66 @@ function renderPath(data, maxHop) {
     });
     list.appendChild(li);
   });
+
+  if (showFuel || isCarrier) {
+    const actualHops = data.path.length - 1;
+    const perfectHops = Math.ceil(data.total / 500);
+    
+    $('info').innerHTML = '';
+    $('info').appendChild(document.createTextNode(`Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly`));
+    
+    const efficiencySpan = document.createElement('span');
+    efficiencySpan.textContent = ` | Hops: ${actualHops} vs ${perfectHops} (Perfect)`;
+    efficiencySpan.title = "Theoretical minimum number of jumps if every hop was exactly 500ly (except the last).";
+    efficiencySpan.style.cursor = 'help';
+    efficiencySpan.style.borderBottom = '1px dotted #888';
+    efficiencySpan.style.marginLeft = '4px';
+    $('info').appendChild(efficiencySpan);
+
+    if (showFuel) {
+      $('info').appendChild(document.createTextNode(` | Fuel: ${totalFuel} T`));
+    }
+    
+    if (showFuel && currentTritium < 0) {
+      const warn = document.createElement('span');
+      warn.style.color = 'red';
+      warn.style.fontWeight = 'bold';
+      warn.style.marginLeft = '8px';
+      warn.textContent = '[Out of fuel!]';
+      $('info').appendChild(warn);
+    }
+  } else {
+    $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;
+  }
 }
+
+function getCarrierParams() {
+  const cargoStr = $('carrier-cargo').value.trim();
+  const tritiumStr = $('carrier-tritium').value.trim();
+  
+  if (cargoStr === '' && tritiumStr === '') return { cargo: 0, tritium: 0, isEmpty: true };
+
+  let cargo = parseFloat(cargoStr) || 0;
+  let tritium = parseFloat(tritiumStr) || 0;
+  
+  if (cargo < 0) cargo = 0;
+  if (cargo > 25000) cargo = 25000;
+  if (tritium < 0) tritium = 0;
+  if (tritium > 1000) tritium = 1000;
+  
+  return { cargo, tritium, isEmpty: false };
+}
+
+$('carrier-cargo').addEventListener('input', () => {
+  if (lastResult) {
+    renderPath(lastResult, currentParams.max_hop, getCarrierParams());
+  }
+});
+$('carrier-tritium').addEventListener('input', () => {
+  if (lastResult) {
+    renderPath(lastResult, currentParams.max_hop, getCarrierParams());
+  }
+});
 
 $('find').addEventListener('click', async ()=>{
   if (!(await ensureBackendReady())) return;
@@ -457,7 +806,6 @@ $('find').addEventListener('click', async ()=>{
   
   currentParams = {source, target, max_hop, neutron_highway};
 
-  // basic validation
   if(!source || !target){
     $('info').textContent = 'Enter both source and target';
     return;
@@ -470,17 +818,17 @@ $('find').addEventListener('click', async ()=>{
   $('save-container').style.display = 'none';
   lastResult = null;
 
-  // close previous EventSource if any
   if(es){
     es.close();
     es = null;
   }
+  if(galaxyView) galaxyView.clear();
+
   const params = new URLSearchParams({source, target, max_hop, neutron_highway});
   es = new EventSource(`/api/path/stream?${params.toString()}`);
   es.addEventListener('progress', (ev)=>{
     try{
       const txt = ev.data;
-      console.log(txt);
       $('info').textContent = txt;
     }catch(e){/*ignore*/}
   });
@@ -488,28 +836,8 @@ $('find').addEventListener('click', async ()=>{
     $('search-progress').classList.add('hidden');
     try{
       const data = JSON.parse(ev.data);
-      console.log('Result:', data);
       if(data.error){
-        if (data.error === 'limit_exceeded') {
-          $('info').innerHTML = `<span style="color: #b91c1c; font-weight: bold;">Route exceeds limit of ${data.limit.toLocaleString()} ly</span><br/>Direct distance: ${data.dist.toFixed(0)} ly`;
-          if (data.suggestion) {
-            const div = document.createElement('div');
-            div.className = 'suggestion-box';
-            const typeStr = data.is_neutron ? 'Neutron Star' : 'system';
-            div.innerHTML = `<span>Try plotting to a ${typeStr} closer to the limit:</span><br/><strong>${data.suggestion.name}</strong> (~25k ly away)`;
-            const btn = document.createElement('button');
-            btn.textContent = 'Use as Target';
-            btn.style.marginLeft = '12px';
-            btn.onclick = () => {
-              $('target').value = data.suggestion.name;
-              $('find').click();
-            };
-            div.appendChild(btn);
-            $('info').appendChild(div);
-          }
-        } else {
-          $('info').textContent = data.error;
-        }
+        handlePlottingError(data);
       }else{
         lastSuccessTime = Date.now();
         $('info').textContent = `Total: ${data.total.toFixed(1)} ly | Direct: ${data.direct.toFixed(1)} ly | Diff: +${data.diff_pct.toFixed(1)}%`;
@@ -524,9 +852,7 @@ $('find').addEventListener('click', async ()=>{
     }
   });
   es.onerror = (ev)=>{
-    // show network/stream error
     $('search-progress').classList.add('hidden');
-    console.error('Stream error:', ev);
     $('info').textContent = 'Stream error or connection closed';
     if(es){ es.close(); es = null; }
   };
@@ -555,10 +881,15 @@ function updateSavedRoutesDropdown() {
 $('save-route').addEventListener('click', () => {
   if (!lastResult) return;
   const neutronFlag = currentParams.neutron_highway ? ' [Neutron]' : '';
-  const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)${neutronFlag}`;
+  const activeTab = document.querySelector('.tab-btn.active').getAttribute('data-tab');
+  const carrierFlag = activeTab === 'carrier' ? ' [Carrier]' : '';
+  const name = `${currentParams.source} -> ${currentParams.target} (${currentParams.max_hop}ly)${neutronFlag}${carrierFlag}`;
   const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
+  const carrierParams = activeTab === 'carrier' ? getCarrierParams() : null;
+
   routes[name] = {
     params: currentParams,
+    carrierParams: carrierParams,
     result: lastResult,
     timestamp: Date.now()
   };
@@ -573,16 +904,32 @@ $('load-route').addEventListener('click', () => {
   const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
   const route = routes[name];
   if (route) {
-    $('source').value = route.params.source;
-    $('target').value = route.params.target;
-    $('max-hop').value = route.params.max_hop;
-    currentParams = route.params;
+    if (name.includes('[Carrier]')) {
+      $('carrier-source').value = route.params.source;
+      $('carrier-target').value = route.params.target;
+      $('carrier-max-hop').value = route.params.max_hop;
+      if (route.carrierParams) {
+        $('carrier-cargo').value = (route.carrierParams.cargo !== undefined && route.carrierParams.cargo !== null) ? route.carrierParams.cargo : '';
+        $('carrier-tritium').value = (route.carrierParams.tritium !== undefined && route.carrierParams.tritium !== null) ? route.carrierParams.tritium : '';
+      }
+      document.querySelector('[data-tab="carrier"]').click();
+    } else {
+      $('source').value = route.params.source;
+      $('target').value = route.params.target;
+      $('max-hop').value = route.params.max_hop;
+      if ($('neutron-highway')) {
+        $('neutron-highway').checked = route.params.neutron_highway;
+      }
+      document.querySelector('[data-tab="plotter"]').click();
+    }
+    
+    currentParams = { ...route.params };
     lastResult = route.result;
     
-    $('info').textContent = `Loaded: Total: ${lastResult.total.toFixed(1)} ly | Direct: ${lastResult.direct.toFixed(1)} ly | Diff: +${lastResult.diff_pct.toFixed(1)}%`;
     $('results').classList.remove('hidden');
     $('save-container').style.display = 'block';
-    renderPath(lastResult, route.params.max_hop);
+    if(galaxyView) galaxyView.clear();
+    renderPath(lastResult, route.params.max_hop, getCarrierParams());
   }
 });
 
@@ -627,25 +974,19 @@ $('import-file').addEventListener('change', (e) => {
     try {
       const data = JSON.parse(ev.target.result);
       const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
-      
-      // Check if it's a single route or multiple
       if (data.params && data.result) {
-        // Single route
         const name = `${data.params.source} -> ${data.params.target} (${data.params.max_hop}ly) [Imported]`;
         routes[name] = data;
       } else {
-        // Assume collection of routes
         Object.assign(routes, data);
       }
-      
       localStorage.setItem('plotter_routes', JSON.stringify(routes));
       updateSavedRoutesDropdown();
       alert('Routes imported successfully');
     } catch (err) {
       alert('Failed to import: Invalid JSON file');
-      console.error(err);
     }
-    e.target.value = ''; // Reset input
+    e.target.value = ''; 
   };
   reader.readAsText(file);
 });
@@ -674,7 +1015,6 @@ $('find-nearest').addEventListener('click', async ()=>{
       return;
     }
     const data = await res.json();
-    console.log('Nearest Result:', data);
     if(data.error){
       $('info').textContent = data.error;
     }else{
@@ -704,7 +1044,6 @@ $('find-nearest').addEventListener('click', async ()=>{
     }
   } catch(e) {
     $('search-progress').classList.add('hidden');
-    console.error(e);
     $('info').textContent = 'Error during search';
   }
 });
@@ -714,28 +1053,20 @@ updateSavedRoutesDropdown();
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then(reg => {
-      console.log('SW registered:', reg);
-      
-      // Check for updates on load
       reg.update();
-
       reg.addEventListener('updatefound', () => {
         const newWorker = reg.installing;
         newWorker.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // New content is available; please refresh.
             if (confirm('A new version of the Plotter is available. Update now?')) {
               location.reload();
             }
           }
         });
       });
-    }).catch(err => {
-      console.log('SW registration failed:', err);
     });
   });
 
-  // Handle controller change (e.g. after skipWaiting)
   let refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return;
@@ -743,3 +1074,27 @@ if ('serviceWorker' in navigator) {
     window.location.reload();
   });
 }
+
+// 3D Visualizer UI Handlers
+$('toggle-3d').addEventListener('click', () => {
+  $('visualizer-container').classList.remove('hidden');
+  $('toggle-3d').classList.add('hidden');
+  if (!galaxyView) {
+    galaxyView = new GalaxyView('three-viewport');
+  }
+  if (lastResult) {
+    galaxyView.clear();
+    galaxyView.addRoute(lastResult.path);
+  }
+});
+
+$('close-3d').addEventListener('click', () => {
+  $('visualizer-container').classList.add('hidden');
+  $('toggle-3d').classList.remove('hidden');
+});
+
+$('reset-camera').addEventListener('click', () => {
+  if (galaxyView) {
+    galaxyView.frameRoute(lastResult ? lastResult.path : null);
+  }
+});

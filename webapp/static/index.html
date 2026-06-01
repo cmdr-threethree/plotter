@@ -6,6 +6,14 @@
   <title>Plotter — Path Finder</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="manifest" href="manifest.json">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
 </head>
 <body>
   <div id="app">
@@ -21,6 +29,7 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="home">🏠 Home</button>
       <button class="tab-btn" data-tab="plotter">🚀 Plotter</button>
+      <button class="tab-btn" data-tab="carrier">🚢 Carrier</button>
       <button class="tab-btn" data-tab="search">🔍 Search</button>
       <button class="tab-btn" data-tab="library">📚 Library</button>
     </nav>
@@ -51,7 +60,7 @@
                   <li>This results in approximately 2GB database size.
                 </ul>
               </li>
-              <li><strong>Thanks:</strong> Elite Dangerous community, especially EDSM and Spansh and of course <i>fdev</>.</li>
+              <li><strong>Thanks:</strong> Elite Dangerous community, especially EDSM and Spansh and of course <i>fdev</i>.</li>
             </ul>
           </div>
         </div>
@@ -83,6 +92,40 @@
           </div>
           <div class="row">
             <button id="find">Find path</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Carrier Tab -->
+      <section id="carrier-tab" class="tab-content">
+        <div class="controls">
+          <div class="row">
+            <label>Source</label>
+            <input id="carrier-source" placeholder="system name or id64" />
+            <div id="carrier-src-suggestions" class="suggestions"></div>
+          </div>
+          <div class="row" style="text-align: center;">
+            <button id="carrier-reverse" title="Swap source and target">⇅ Reverse</button>
+          </div>
+          <div class="row">
+            <label>Target</label>
+            <input id="carrier-target" placeholder="system name or id64" />
+            <div id="carrier-tgt-suggestions" class="suggestions"></div>
+          </div>
+          <div class="row small">
+            <label>Max hop</label>
+            <input id="carrier-max-hop" type="number" value="500" />
+          </div>
+          <div class="row small">
+            <label>Used Cargo</label>
+            <input id="carrier-cargo" type="number" placeholder="0-25000" min="0" max="25000" />
+          </div>
+          <div class="row small">
+            <label>Tritium in Tank</label>
+            <input id="carrier-tritium" type="number" placeholder="0-1000" min="0" max="1000" />
+          </div>
+          <div class="row">
+            <button id="carrier-find">Find path</button>
           </div>
         </div>
       </section>
@@ -139,7 +182,19 @@
       <!-- Shared Results Section -->
       <section id="results" class="results-area hidden">
         <hr/>
-        <h2>Results</h2>
+        <div class="results-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1em;">
+          <h2 style="margin: 0;">Results</h2>
+          <button id="toggle-3d" class="preset-btn">View in 3D</button>
+        </div>
+        
+        <div id="visualizer-container" class="hidden" style="margin-bottom: 1.5em;">
+           <div id="three-viewport" style="width: 100%; height: 400px; background: #000; border-radius: 8px; overflow: hidden; position: relative;"></div>
+           <div class="visualizer-controls" style="margin-top: 8px; display: flex; gap: 8px; justify-content: flex-end;">
+             <button id="reset-camera" class="preset-btn">Reset View</button>
+             <button id="close-3d" class="preset-btn" style="color: #f87171; border-color: #7f1d1d;">Close 3D</button>
+           </div>
+        </div>
+
         <div id="search-progress" class="progress-container hidden" style="margin-bottom: 1em;"><div class="progress-bar indeterminate"></div></div>
         <div id="info"></div>
         <ol id="path-list"></ol>
@@ -151,6 +206,6 @@
     <footer>Plotter by Cmdr ThreeThree. Source at <a href="https://github.com/cmdr-threethree/plotter">github.com/cmdr-threethree/plotter</a>. Elite Dangerous™ is a trademark of Frontier Developments plc. This tool is an independent, unofficial project and is not endorsed by Frontier Developments.</footer>
   </div>
   <div id="toast-container"></div>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
