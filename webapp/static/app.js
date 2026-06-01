@@ -57,6 +57,7 @@ class GalaxyView {
   }
 
   addRoute(path) {
+    if (!path || path.length === 0) return;
     const points = [];
     path.forEach(node => {
       // Negate Z because Elite Z+ (North) should point 'Away' (Three.js Z-)
@@ -84,12 +85,30 @@ class GalaxyView {
       this.route.add(sphere);
     });
 
-    // Auto-focus on route start
-    if (path.length > 0) {
-      const start = path[0].coords;
-      this.camera.position.set(start.x, start.y + 1000, -start.z + 2000);
-      this.controls.target.set(start.x, start.y, -start.z);
+    this.frameRoute(path);
+  }
+
+  frameRoute(path) {
+    if (!path || path.length === 0) {
+      this.camera.position.set(0, 1000, 2000);
+      this.controls.target.set(0, 0, 0);
+      return;
     }
+
+    const bbox = new THREE.Box3();
+    path.forEach(node => {
+      bbox.expandByPoint(new THREE.Vector3(node.coords.x, node.coords.y, -node.coords.z));
+    });
+
+    const center = new THREE.Vector3();
+    bbox.getCenter(center);
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    
+    const zoomAmount = Math.max(2000, maxDim * 1.5);
+    this.camera.position.set(center.x, center.y + zoomAmount * 0.5, center.z + zoomAmount);
+    this.controls.target.copy(center);
   }
 }
 
@@ -1005,13 +1024,6 @@ $('close-3d').addEventListener('click', () => {
 
 $('reset-camera').addEventListener('click', () => {
   if (galaxyView) {
-    if (lastResult && lastResult.path.length > 0) {
-      const start = lastResult.path[0].coords;
-      galaxyView.camera.position.set(start.x, start.y + 1000, -start.z + 2000);
-      galaxyView.controls.target.set(start.x, start.y, -start.z);
-    } else {
-      galaxyView.camera.position.set(0, 1000, 2000);
-      galaxyView.controls.target.set(0, 0, 0);
-    }
+    galaxyView.frameRoute(lastResult ? lastResult.path : null);
   }
 });
