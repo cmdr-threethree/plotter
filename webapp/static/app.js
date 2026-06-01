@@ -31,8 +31,61 @@ class GalaxyView {
     this.route = new THREE.Group();
     this.scene.add(this.route);
 
+    this.labels = new THREE.Group();
+    this.scene.add(this.labels);
+
+    this.anchors = new THREE.Group();
+    this.scene.add(this.anchors);
+    this.anchorNames = ['Sol', 'Colonia', 'Sagittarius A*', 'Beagle Point'];
+    this.initAnchors();
+
     window.addEventListener('resize', () => this.onResize());
     this.animate();
+  }
+
+  initAnchors() {
+    const systems = [
+      { name: 'Sol', x: 0, y: 0, z: 0 },
+      { name: 'Colonia', x: -9530.5, y: -910.3, z: 19808.1 },
+      { name: 'Sagittarius A*', x: 25.2, y: -20.9, z: 25900.0 },
+      { name: 'Beagle Point', x: -1111.5625, y: -134.21875, z: 65269.75 },
+    ];
+
+    systems.forEach(s => {
+      const sprite = this.createLabel(s.name, s.x, s.y, -s.z, '#475569');
+      this.anchors.add(sprite);
+      
+      // Add a small point for the anchor
+      const geom = new THREE.SphereGeometry(50, 8, 8);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.5 });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.set(s.x, s.y, -s.z);
+      this.anchors.add(mesh);
+    });
+  }
+
+  createLabel(text, x, y, z, color = '#22d3ee') {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 512;
+    canvas.height = 128;
+    
+    ctx.font = 'Bold 48px Inter, Arial, sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Draw text with a subtle glow/shadow for readability
+    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+    ctx.shadowBlur = 8;
+    ctx.fillText(text, 256, 64);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(x, y + 600, z); // Offset label above point
+    sprite.scale.set(5000, 1250, 1);
+    return sprite;
   }
 
   onResize() {
@@ -53,6 +106,12 @@ class GalaxyView {
       child.geometry.dispose();
       child.material.dispose();
       this.route.remove(child);
+    }
+    while(this.labels.children.length > 0) {
+      const child = this.labels.children[0];
+      if (child.material && child.material.map) child.material.map.dispose();
+      if (child.material) child.material.dispose();
+      this.labels.remove(child);
     }
   }
 
@@ -84,6 +143,18 @@ class GalaxyView {
       sphere.renderOrder = 2;
       this.route.add(sphere);
     });
+
+    // Add labels for source and target with deduplication
+    const source = path[0];
+    const target = path[path.length - 1];
+
+    if (!this.anchorNames.includes(source.name)) {
+      this.labels.add(this.createLabel(source.name, source.coords.x, source.coords.y, -source.coords.z));
+    }
+    
+    if (target !== source && !this.anchorNames.includes(target.name)) {
+      this.labels.add(this.createLabel(target.name, target.coords.x, target.coords.y, -target.coords.z));
+    }
 
     this.frameRoute(path);
   }
