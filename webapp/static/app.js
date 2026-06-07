@@ -26,7 +26,61 @@ class GalaxyView {
     
     // Add grid for galactic plane
     const grid = new THREE.GridHelper(100000, 100, 0x1e293b, 0x0f172a);
+    grid.position.set(0, 0, -25900);
     this.scene.add(grid);
+
+    // --- Galactic Plane Glow ---
+    const planeSize = 400000; // covers the whole bubble
+    const glowGeometry = new THREE.PlaneGeometry(planeSize, planeSize);
+
+    var glowMaterial = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+            uColor: { value: new THREE.Color(0x406080) },
+            uIntensity: { value: 1.2 },
+            uFalloff: { value: 0.00005 } // lower = larger glow
+        },
+        vertexShader: `
+            varying vec2 vUvScaled;
+            void main() {
+                // uv is 0..1, shift to -0.5..0.5
+                vec2 centered = uv - 0.5;
+
+                // scale to galaxy size (200k LY plane)
+                vUvScaled = centered * 200000.0;
+
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec2 vUvScaled;
+            uniform vec3 uColor;
+            uniform float uIntensity;
+            uniform float uFalloff;
+
+            void main() {
+                float dist = length(vUvScaled);
+
+                // exponential falloff in LY
+                float alpha = uIntensity * exp(-dist * uFalloff);
+
+                gl_FragColor = vec4(uColor, alpha);
+            }
+        `
+    });
+
+
+    const glowPlane = new THREE.Mesh(glowGeometry, glowMaterial);
+    glowPlane.rotation.x = -Math.PI / 2; // horizontal
+    glowPlane.position.set(0, 0, -25900); // Sagittarius A*
+    this.scene.add(glowPlane);
+    // allow easy manipulation from console
+    window.galaxyGlow = glowMaterial;
+    window.galaxyGlowPlane = glowPlane;
 
     this.route = new THREE.Group();
     this.scene.add(this.route);
@@ -124,7 +178,11 @@ class GalaxyView {
     });
 
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({ color: 0x22d3ee, linewidth: 3 });
+    const material = new THREE.LineBasicMaterial({
+      color: 0x22d3ee,
+      linewidth: 3,
+      depthTest: true
+    });
     const line = new THREE.Line(geometry, material);
     line.renderOrder = 1;
     this.route.add(line);
