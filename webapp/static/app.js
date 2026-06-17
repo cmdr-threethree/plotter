@@ -13,11 +13,12 @@ class GalaxyView {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x020617);
     
-    this.camera = new THREE.PerspectiveCamera(60, this.container.clientWidth / 400, 1, 1000000);
+    const height = this.container.clientHeight || 400;
+    this.camera = new THREE.PerspectiveCamera(60, this.container.clientWidth / height, 1, 1000000);
     this.camera.position.set(0, 1000, 2000);
     
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setSize(this.container.clientWidth, 400);
+    this.renderer.setSize(this.container.clientWidth, height);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.container.appendChild(this.renderer.domElement);
     
@@ -143,9 +144,10 @@ class GalaxyView {
   }
 
   onResize() {
-    this.camera.aspect = this.container.clientWidth / 400;
+    const height = this.container.clientHeight || 400;
+    this.camera.aspect = this.container.clientWidth / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(this.container.clientWidth, 400);
+    this.renderer.setSize(this.container.clientWidth, height);
   }
 
   animate() {
@@ -1147,6 +1149,9 @@ $('toggle-3d').addEventListener('click', () => {
 });
 
 $('close-3d').addEventListener('click', () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  }
   $('visualizer-container').classList.add('hidden');
   $('toggle-3d').classList.remove('hidden');
 });
@@ -1154,5 +1159,32 @@ $('close-3d').addEventListener('click', () => {
 $('reset-camera').addEventListener('click', () => {
   if (galaxyView) {
     galaxyView.frameRoute(lastResult ? lastResult.path : null);
+  }
+});
+
+$('toggle-fullscreen').addEventListener('click', () => {
+  const container = $('visualizer-container');
+  if (!document.fullscreenElement) {
+    container.requestFullscreen().catch(err => {
+      showToast(`Error attempting to enable full-screen mode: ${err.message}`);
+    });
+  } else {
+    document.exitFullscreen();
+  }
+});
+
+document.addEventListener('fullscreenchange', () => {
+  const container = $('visualizer-container');
+  const btn = $('toggle-fullscreen');
+  if (document.fullscreenElement === container) {
+    container.classList.add('is-fullscreen');
+    btn.textContent = 'Exit Fullscreen';
+  } else {
+    container.classList.remove('is-fullscreen');
+    btn.textContent = '⛶ Fullscreen';
+  }
+  if (galaxyView) {
+    // Small delay to ensure container has resized
+    setTimeout(() => galaxyView.onResize(), 100);
   }
 });
