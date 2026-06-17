@@ -245,6 +245,868 @@ class GalaxyView {
 
 let galaxyView = null;
 
+const DEMO_ROUTE = {
+  "params": {
+    "source": "Sol",
+    "target": "Colonia",
+    "max_hop": 400,
+    "neutron_highway": true
+  },
+  "result": {
+    "path": [
+      {
+        "id64": 10477373803,
+        "name": "Sol",
+        "coords": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "mainStar": "G (White-Yellow) Star",
+        "hop_dist": 0,
+        "needs_permit": true
+      },
+      {
+        "id64": 5532807773,
+        "name": "Jackson's Lighthouse",
+        "coords": {
+          "x": 157,
+          "y": -27,
+          "z": -70
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 174,
+        "needs_permit": false
+      },
+      {
+        "id64": 151634584764,
+        "name": "Lalande 25224",
+        "coords": {
+          "x": 22.28125,
+          "y": 183.3125,
+          "z": 64.65625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 283.7,
+        "needs_permit": false
+      },
+      {
+        "id64": 22712681061,
+        "name": "PSR J1752-2806",
+        "coords": {
+          "x": -10.96875,
+          "y": -6.84375,
+          "z": 407.28125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 393.3,
+        "needs_permit": false
+      },
+      {
+        "id64": 5531763309,
+        "name": "Nova Aquila No 3",
+        "coords": {
+          "x": -363.03125,
+          "y": 3.3125,
+          "z": 548.28125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 379.4,
+        "needs_permit": false
+      },
+      {
+        "id64": 1041168861635,
+        "name": "B133 Sector DB-X d1-30",
+        "coords": {
+          "x": -490.78125,
+          "y": -15.71875,
+          "z": 881.40625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 357.3,
+        "needs_permit": false
+      },
+      {
+        "id64": 1109838006739,
+        "name": "Col 359 Sector PU-F d11-32",
+        "coords": {
+          "x": -733.28125,
+          "y": -17.875,
+          "z": 1061.40625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 302,
+        "needs_permit": false
+      },
+      {
+        "id64": 1041084959211,
+        "name": "Swoiwns BY-F d12-30",
+        "coords": {
+          "x": -943.84375,
+          "y": -67.46875,
+          "z": 1311.1875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 330.4,
+        "needs_permit": false
+      },
+      {
+        "id64": 1796965648907,
+        "name": "Bleia Eohn DC-B d1-52",
+        "coords": {
+          "x": -1063.90625,
+          "y": -61,
+          "z": 1634.375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 344.8,
+        "needs_permit": false
+      },
+      {
+        "id64": 2277951654427,
+        "name": "Bleia Eohn IO-X d2-66",
+        "coords": {
+          "x": -1279.5,
+          "y": -60,
+          "z": 1753.40625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 246.3,
+        "needs_permit": false
+      },
+      {
+        "id64": 1144063527475,
+        "name": "Phylur NL-P d5-33",
+        "coords": {
+          "x": -1357.1875,
+          "y": 12.5,
+          "z": 2018.8125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 285.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 285070068299,
+        "name": "Phylur ZD-K d8-8",
+        "coords": {
+          "x": -1414.9375,
+          "y": -6.3125,
+          "z": 2285.09375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 273.1,
+        "needs_permit": false
+      },
+      {
+        "id64": 1968646900323,
+        "name": "Aucopp ES-H d11-57",
+        "coords": {
+          "x": -1598.46875,
+          "y": -55.90625,
+          "z": 2465.25
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 261.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 1418874309251,
+        "name": "Drojeae HW-C d41",
+        "coords": {
+          "x": -1742.03125,
+          "y": -78.3125,
+          "z": 2834.75
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 397,
+        "needs_permit": false
+      },
+      {
+        "id64": 2552728881835,
+        "name": "Drojeae CW-T d4-74",
+        "coords": {
+          "x": -1799.28125,
+          "y": -107.375,
+          "z": 3197.28125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 368.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 422374771395,
+        "name": "Drojeae LO-O d7-12",
+        "coords": {
+          "x": -1993.5625,
+          "y": -129.1875,
+          "z": 3460.375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 327.8,
+        "needs_permit": false
+      },
+      {
+        "id64": 869034593003,
+        "name": "Drojeae ET-F d12-25",
+        "coords": {
+          "x": -2069.96875,
+          "y": -107.8125,
+          "z": 3843.09375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 390.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 3033664555787,
+        "name": "Blae Drye GX-A d1-88",
+        "coords": {
+          "x": -2239.125,
+          "y": -149.46875,
+          "z": 4179.53125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 378.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 2312110050083,
+        "name": "Blae Drye SP-V d3-67",
+        "coords": {
+          "x": -2276.59375,
+          "y": -160.21875,
+          "z": 4426.3125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 249.8,
+        "needs_permit": false
+      },
+      {
+        "id64": 4614195743563,
+        "name": "Blae Drye LU-M d8-134",
+        "coords": {
+          "x": -2380.03125,
+          "y": -131,
+          "z": 4775.0625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 364.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 697151998827,
+        "name": "Blae Drye BO-F d12-20",
+        "coords": {
+          "x": -2504.25,
+          "y": -246.875,
+          "z": 5109.90625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 375.5,
+        "needs_permit": false
+      },
+      {
+        "id64": 1556145441675,
+        "name": "Gria Drye HN-A d1-45",
+        "coords": {
+          "x": -2499.53125,
+          "y": -293,
+          "z": 5441.875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 335.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 2621263760299,
+        "name": "Pyraleau NH-T d4-76",
+        "coords": {
+          "x": -2704.84375,
+          "y": -351.125,
+          "z": 5767.6875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 389.5,
+        "needs_permit": false
+      },
+      {
+        "id64": 2208913329099,
+        "name": "Pyraleau DB-M d8-64",
+        "coords": {
+          "x": -2795.53125,
+          "y": -430.40625,
+          "z": 6056.625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 313,
+        "needs_permit": false
+      },
+      {
+        "id64": 2552510729195,
+        "name": "Pyraleau RE-F d12-74",
+        "coords": {
+          "x": -2860.65625,
+          "y": -383.6875,
+          "z": 6399.15625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 351.8,
+        "needs_permit": false
+      },
+      {
+        "id64": 2586803358723,
+        "name": "Nyeajaae NC-C d75",
+        "coords": {
+          "x": -3175.125,
+          "y": -371.90625,
+          "z": 6619.90625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 384.4,
+        "needs_permit": false
+      },
+      {
+        "id64": 112885419043,
+        "name": "Nyeajaae CB-V d3-3",
+        "coords": {
+          "x": -3264.84375,
+          "y": -377.5,
+          "z": 6964.34375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 356,
+        "needs_permit": false
+      },
+      {
+        "id64": 2243138849851,
+        "name": "Nyeajaae NO-P d6-65",
+        "coords": {
+          "x": -3482.21875,
+          "y": -462.4375,
+          "z": 7190.8125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 325.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 1349752097883,
+        "name": "Nyeajaae BN-I d10-39",
+        "coords": {
+          "x": -3631.125,
+          "y": -446.59375,
+          "z": 7504.5
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 347.6,
+        "needs_permit": false
+      },
+      {
+        "id64": 2586652331115,
+        "name": "Nyeajaae IU-E d12-75",
+        "coords": {
+          "x": -3902.84375,
+          "y": -539.28125,
+          "z": 7668.53125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 330.6,
+        "needs_permit": false
+      },
+      {
+        "id64": 2998918876291,
+        "name": "Flyiedge TX-B d87",
+        "coords": {
+          "x": -4142.40625,
+          "y": -491,
+          "z": 7950.21875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 372.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 1624495754403,
+        "name": "Flyiedge LM-U d3-47",
+        "coords": {
+          "x": -4247.125,
+          "y": -649.75,
+          "z": 8290.15625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 389.5,
+        "needs_permit": false
+      },
+      {
+        "id64": 284465941691,
+        "name": "Flyiedge ZZ-O d6-8",
+        "coords": {
+          "x": -4264.09375,
+          "y": -675.59375,
+          "z": 8489.46875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 201.7,
+        "needs_permit": false
+      },
+      {
+        "id64": 1212162100443,
+        "name": "Flyiedge OY-H d10-35",
+        "coords": {
+          "x": -4345.9375,
+          "y": -729.84375,
+          "z": 8803.1875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 328.7,
+        "needs_permit": false
+      },
+      {
+        "id64": 2586501319923,
+        "name": "Flyiedge VV-C d13-75",
+        "coords": {
+          "x": -4574.65625,
+          "y": -651.875,
+          "z": 9063.53125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 355.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 1796176989459,
+        "name": "Skaude YU-X d1-52",
+        "coords": {
+          "x": -4803.34375,
+          "y": -678.5625,
+          "z": 9373.59375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 386.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 604380148937,
+        "name": "Skaude BL-N b23-0",
+        "coords": {
+          "x": -4961.75,
+          "y": -719.375,
+          "z": 9679.65625
+        },
+        "mainStar": "M (Red dwarf) Star",
+        "hop_dist": 347,
+        "needs_permit": false
+      },
+      {
+        "id64": 1211977534795,
+        "name": "Skaudai NH-L d8-35",
+        "coords": {
+          "x": -5250.34375,
+          "y": -765.28125,
+          "z": 9947.25
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 396.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 43679337835,
+        "name": "Skaudai XK-E d12-1",
+        "coords": {
+          "x": -5516.875,
+          "y": -732.9375,
+          "z": 10232.5
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 391.7,
+        "needs_permit": false
+      },
+      {
+        "id64": 284197506443,
+        "name": "Prua Phoe BP-Z d8",
+        "coords": {
+          "x": -5525.25,
+          "y": -714.96875,
+          "z": 10539.40625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 307.5,
+        "needs_permit": false
+      },
+      {
+        "id64": 1521114533291,
+        "name": "Prua Phoe PN-S d4-44",
+        "coords": {
+          "x": -5708,
+          "y": -707.78125,
+          "z": 10871.6875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 379.3,
+        "needs_permit": false
+      },
+      {
+        "id64": 2483136859587,
+        "name": "Prua Phoe AB-N d7-72",
+        "coords": {
+          "x": -5949.03125,
+          "y": -748.15625,
+          "z": 11148.8125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 369.5,
+        "needs_permit": false
+      },
+      {
+        "id64": 3823149895147,
+        "name": "Prua Phoe RK-E d12-111",
+        "coords": {
+          "x": -6042.75,
+          "y": -720.125,
+          "z": 11523
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 386.8,
+        "needs_permit": false
+      },
+      {
+        "id64": 1383574916627,
+        "name": "Clooku XU-X d1-40",
+        "coords": {
+          "x": -6155.65625,
+          "y": -697.46875,
+          "z": 11897.625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 391.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 8496023998003,
+        "name": "Clooku KY-Q d5-247",
+        "coords": {
+          "x": -6286.59375,
+          "y": -652.6875,
+          "z": 12245.53125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 374.4,
+        "needs_permit": false
+      },
+      {
+        "id64": 3960521739867,
+        "name": "Clooku FY-H d10-115",
+        "coords": {
+          "x": -6375.03125,
+          "y": -701.25,
+          "z": 12623.71875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 391.4,
+        "needs_permit": false
+      },
+      {
+        "id64": 558874103411,
+        "name": "Blua Hypa DW-C d13-16",
+        "coords": {
+          "x": -6534.90625,
+          "y": -630.25,
+          "z": 12910.3125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 335.8,
+        "needs_permit": false
+      },
+      {
+        "id64": 7327708991131,
+        "name": "Stuelou LB-W d2-213",
+        "coords": {
+          "x": -6685.9375,
+          "y": -729.1875,
+          "z": 13260.125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 393.7,
+        "needs_permit": false
+      },
+      {
+        "id64": 6331243024059,
+        "name": "Stuelou ZZ-O d6-184",
+        "coords": {
+          "x": -6803.625,
+          "y": -709.5625,
+          "z": 13618.875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 378.1,
+        "needs_permit": false
+      },
+      {
+        "id64": 14680659447523,
+        "name": "Stuelou TE-G d11-427",
+        "coords": {
+          "x": -6859.71875,
+          "y": -671.40625,
+          "z": 14000.21875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 387.3,
+        "needs_permit": false
+      },
+      {
+        "id64": 11725671616259,
+        "name": "Blua Eaec UI-B d341",
+        "coords": {
+          "x": -7052.375,
+          "y": -710.53125,
+          "z": 14334.625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 387.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 25538269646627,
+        "name": "Blua Eaec LC-U d3-743",
+        "coords": {
+          "x": -7150.46875,
+          "y": -752.53125,
+          "z": 14692.1875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 373.1,
+        "needs_permit": false
+      },
+      {
+        "id64": 3140738836388,
+        "name": "Blua Eaec MN-T e3-731",
+        "coords": {
+          "x": -7287.0625,
+          "y": -784.96875,
+          "z": 15026.0625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 362.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 18631895158635,
+        "name": "Blua Eaec NP-E d12-542",
+        "coords": {
+          "x": -7443.625,
+          "y": -649.25,
+          "z": 15360.53125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 393.4,
+        "needs_permit": false
+      },
+      {
+        "id64": 10797858017163,
+        "name": "Boelts SO-Z d314",
+        "coords": {
+          "x": -7578.4375,
+          "y": -674.6875,
+          "z": 15664.15625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 333.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 22170881085355,
+        "name": "Boeph VN-S d4-645",
+        "coords": {
+          "x": -7746.84375,
+          "y": -683,
+          "z": 15981.6875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 359.5,
+        "needs_permit": false
+      },
+      {
+        "id64": 22892418813891,
+        "name": "Boeph GG-N d7-666",
+        "coords": {
+          "x": -7864.59375,
+          "y": -678.8125,
+          "z": 16286.6875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 327,
+        "needs_permit": false
+      },
+      {
+        "id64": 16741992091627,
+        "name": "Boeph YK-E d12-487",
+        "coords": {
+          "x": -8031.96875,
+          "y": -690.34375,
+          "z": 16634.15625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 385.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 695960719371,
+        "name": "Eoch Flyuae AP-Z d20",
+        "coords": {
+          "x": -8191.21875,
+          "y": -711.40625,
+          "z": 16971.8125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 373.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 28424219234339,
+        "name": "Eoch Flyuae LC-U d3-827",
+        "coords": {
+          "x": -8389.5,
+          "y": -745.53125,
+          "z": 17254.40625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 346.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 32272493170763,
+        "name": "Eoch Flyuae CM-L d8-939",
+        "coords": {
+          "x": -8542.1875,
+          "y": -733.96875,
+          "z": 17613.09375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 390,
+        "needs_permit": false
+      },
+      {
+        "id64": 108035699478643,
+        "name": "Eoch Flyuae XL-C d13-3144",
+        "coords": {
+          "x": -8620.34375,
+          "y": -773.3125,
+          "z": 17994.21875
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 391,
+        "needs_permit": false
+      },
+      {
+        "id64": 21002448638091,
+        "name": "Dryio Flyuae VJ-Z d611",
+        "coords": {
+          "x": -8734.875,
+          "y": -800.46875,
+          "z": 18269.0625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 299,
+        "needs_permit": false
+      },
+      {
+        "id64": 1401239324756,
+        "name": "Dryio Flyuae FW-W e1-326",
+        "coords": {
+          "x": -8858.25,
+          "y": -829.46875,
+          "z": 18554.375
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 312.2,
+        "needs_permit": false
+      },
+      {
+        "id64": 22926526861515,
+        "name": "Dryooe Flyou PC-L d8-667",
+        "coords": {
+          "x": -9047.6875,
+          "y": -851.25,
+          "z": 18897
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 392.1,
+        "needs_permit": false
+      },
+      {
+        "id64": 9835432988907,
+        "name": "Dryooe Flyou DB-E d12-286",
+        "coords": {
+          "x": -9231.75,
+          "y": -887.15625,
+          "z": 19223.90625
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 376.9,
+        "needs_permit": false
+      },
+      {
+        "id64": 37701147250955,
+        "name": "Eol Prou FF-Z d1097",
+        "coords": {
+          "x": -9407.1875,
+          "y": -898.96875,
+          "z": 19555.8125
+        },
+        "mainStar": "Neutron Star",
+        "hop_dist": 375.6,
+        "needs_permit": false
+      },
+      {
+        "id64": 3238296097059,
+        "name": "Colonia",
+        "coords": {
+          "x": -9530.5,
+          "y": -910.28125,
+          "z": 19808.125
+        },
+        "mainStar": "F (White) Star",
+        "hop_dist": 281.1,
+        "needs_permit": false
+      }
+    ],
+    "total": 23344.3,
+    "direct": 22000.5,
+    "diff_pct": 6.1
+  },
+  "timestamp": 1779733555412
+};
+
+function applyRouteToUI(route, name = null) {
+  if (name && name.includes('[Carrier]')) {
+    $('carrier-source').value = route.params.source;
+    $('carrier-target').value = route.params.target;
+    $('carrier-max-hop').value = route.params.max_hop;
+    if (route.carrierParams) {
+      $('carrier-cargo').value = (route.carrierParams.cargo !== undefined && route.carrierParams.cargo !== null) ? route.carrierParams.cargo : '';
+      $('carrier-tritium').value = (route.carrierParams.tritium !== undefined && route.carrierParams.tritium !== null) ? route.carrierParams.tritium : '';
+    }
+    document.querySelector('[data-tab="carrier"]').click();
+  } else {
+    $('source').value = route.params.source;
+    $('target').value = route.params.target;
+    $('max-hop').value = route.params.max_hop;
+    if ($('neutron-highway')) {
+      $('neutron-highway').checked = route.params.neutron_highway;
+    }
+    document.querySelector('[data-tab="plotter"]').click();
+  }
+  
+  currentParams = { ...route.params };
+  lastResult = route.result;
+  
+  $('results').classList.remove('hidden');
+  $('save-container').style.display = 'block';
+  if(galaxyView) galaxyView.clear();
+  renderPath(lastResult, route.params.max_hop, getCarrierParams());
+}
+
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -964,32 +1826,7 @@ $('load-route').addEventListener('click', () => {
   const routes = JSON.parse(localStorage.getItem('plotter_routes') || '{}');
   const route = routes[name];
   if (route) {
-    if (name.includes('[Carrier]')) {
-      $('carrier-source').value = route.params.source;
-      $('carrier-target').value = route.params.target;
-      $('carrier-max-hop').value = route.params.max_hop;
-      if (route.carrierParams) {
-        $('carrier-cargo').value = (route.carrierParams.cargo !== undefined && route.carrierParams.cargo !== null) ? route.carrierParams.cargo : '';
-        $('carrier-tritium').value = (route.carrierParams.tritium !== undefined && route.carrierParams.tritium !== null) ? route.carrierParams.tritium : '';
-      }
-      document.querySelector('[data-tab="carrier"]').click();
-    } else {
-      $('source').value = route.params.source;
-      $('target').value = route.params.target;
-      $('max-hop').value = route.params.max_hop;
-      if ($('neutron-highway')) {
-        $('neutron-highway').checked = route.params.neutron_highway;
-      }
-      document.querySelector('[data-tab="plotter"]').click();
-    }
-    
-    currentParams = { ...route.params };
-    lastResult = route.result;
-    
-    $('results').classList.remove('hidden');
-    $('save-container').style.display = 'block';
-    if(galaxyView) galaxyView.clear();
-    renderPath(lastResult, route.params.max_hop, getCarrierParams());
+    applyRouteToUI(route, name);
   }
 });
 
@@ -1109,6 +1946,15 @@ $('find-nearest').addEventListener('click', async ()=>{
 });
 
 updateSavedRoutesDropdown();
+
+$('load-demo').addEventListener('click', () => {
+  applyRouteToUI(DEMO_ROUTE);
+  // Auto-open 3D view for "wow" factor
+  if ($('visualizer-container').classList.contains('hidden')) {
+    $('toggle-3d').click();
+  }
+  showToast("Demo route loaded!");
+});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
