@@ -24,6 +24,7 @@ class System:
     needs_permit: bool = False
     is_neutron: bool = False
     dist: Optional[float] = None
+    _relaxed_hop: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         res = {
@@ -36,6 +37,8 @@ class System:
         }
         if self.dist is not None:
             res["dist"] = self.dist
+        if self._relaxed_hop is not None:
+            res["_relaxed_hop"] = self._relaxed_hop
         return res
 
     @classmethod
@@ -61,5 +64,7 @@ class System:
             needs_permit=needs_permit,
             is_neutron=bool(d.get("is_neutron", False)),
             dist=d.get("dist"),
+            _relaxed_hop=d.get("_relaxed_hop"),
         )
+
 
