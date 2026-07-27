@@ -1302,7 +1302,7 @@ async function fetchWithTimeout(resource, options = {}) {
 function updateWarmupUI(seconds) {
   const bar = $('backend-status');
   bar.className = 'status-bar warming';
-  bar.querySelector('.status-text').textContent = `Backend is warming up... Ready in approx. ${seconds}s`;
+  bar.querySelector('.status-text').textContent = `Backend server shut down permanently. ${seconds}s`;
   
   const progress = bar.querySelector('.progress-bar');
   const pct = Math.max(0, Math.min(100, ((60 - seconds) / 60) * 100));
